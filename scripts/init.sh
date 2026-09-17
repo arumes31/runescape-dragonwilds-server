@@ -62,16 +62,9 @@ term_handler() {
 trap 'term_handler' SIGTERM
 
 # Start the server as steam user
-su - steam -c "cd /home/steam/server && \
-    DEFAULT_PORT='${DEFAULT_PORT}' \
-    SERVER_NAME='${SERVER_NAME}' \
-    DEFAULT_WORLD_NAME='${DEFAULT_WORLD_NAME}' \
-    OWNER_ID='${OWNER_ID}' \
-    ADMIN_PASSWORD='${ADMIN_PASSWORD}' \
-    WORLD_PASSWORD='${WORLD_PASSWORD}' \
-    MAX_PLAYERS='${MAX_PLAYERS}' \
-    MULTIHOME='${MULTIHOME}' \
-    ./start.sh" &
+export DEFAULT_PORT SERVER_NAME DEFAULT_WORLD_NAME OWNER_ID ADMIN_PASSWORD WORLD_PASSWORD MAX_PLAYERS MULTIHOME
+
+su -m steam -c "cd /home/steam/server && ./start.sh" &
 
 killpid="$!"
 wait "$killpid"
