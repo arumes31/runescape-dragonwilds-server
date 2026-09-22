@@ -93,6 +93,10 @@ To restore: stop the game (`docker compose stop game`), preserve the current Sav
 
 Official references: [Jagex dedicated-server guide](https://dragonwilds.runescape.com/news/how-to-dedicated-servers), [official container documentation](https://github.com/runescape/rsdw-dedicated), [Valve SteamCMD](https://developer.valvesoftware.com/wiki/SteamCMD). The guide documents in-game moderation and warns that live INI edits are overwritten; this implementation therefore does not edit a running game's settings.
 
+## GitHub automation
+
+See [CI.md](CI.md) for quality gates, CodeQL, scheduled vulnerability audits, Dependabot, release archives and GHCR publication of both images. GHCR builds include SBOM/provenance; manual runs default to a non-publishing dry run.
+
 ## Tests
 
 No npm or Python third-party packages are required for the tests.

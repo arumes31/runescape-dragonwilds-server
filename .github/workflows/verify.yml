@@ -1,31 +1,79 @@
-name: Verify container and admin
+name: Verify
 on:
   pull_request:
   push:
-    branches: [main, 'feature/**']
+    branches: ['**']
+  workflow_dispatch:
+  workflow_call:
 permissions:
   contents: read
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
-  verify:
+  quality:
+    name: Lint and unit tests
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.11'
-      - run: python -m unittest discover -s tests -p 'test_*.py' -v
-      - run: node --test tests/*.test.mjs
-      - run: shellcheck -x -P SCRIPTDIR scripts/*.sh
+      - name: Workflow lint
+        uses: docker://rhysd/actionlint:1.7.12
+      - name: Ensure ShellCheck is available
+        run: |
+          if ! command -v shellcheck >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y shellcheck
+          fi
+      - name: Shell lint
+        run: shellcheck -x -P SCRIPTDIR scripts/*.sh
+      - name: Syntax and tests
+        run: bash scripts/ci-checks.sh
+  containers:
+    name: Build, integration and vulnerability scan
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
       - run: python tests/prepare_fixture.py
       - run: docker compose --env-file .env.test.local config --quiet
       - run: docker compose --env-file .env.test.local build --pull
+      - name: Seed isolated fixture volume
+        run: |
+          docker compose --env-file .env.test.local create
+          docker cp test-results/server-files/. dragonwilds-test-game:/home/steam/server-files/
       - run: docker compose --env-file .env.test.local up -d --wait --wait-timeout 150
-      - run: python tests/integration.py
-      - if: always()
-        run: docker compose --env-file .env.test.local logs --no-color
-      - if: always()
-        run: docker compose --env-file .env.test.local down
+      - run: python -u tests/integration.py
+      - name: Scan both built images
+        run: bash scripts/ci-scan-images.sh
+      - name: Collect fixture logs
+        if: always()
+        run: |
+          mkdir -p test-results/ci
+          docker compose --env-file .env.test.local logs --no-color > test-results/ci/containers.log
+      - name: Reports
+        if: always() && !env.ACT
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: container-reports
+          path: test-results/ci/
+          retention-days: 7
+      - name: Remove isolated fixture containers
+        if: always()
+        run: docker compose --env-file .env.test.local down --volumes

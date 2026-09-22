@@ -33,3 +33,11 @@ A real manual restart was triggered through the browser confirmation dialog. The
 - http://localhost:18089 : isolated lifecycle fixture; credentials/settings in the ignored .env.test.local.
 
 Both test environments disable automatic updates. The production .env.example enables them by default. Use a real OWNER_ID and fresh passwords for Linux deployment; never reuse the synthetic test settings.
+
+## GitHub workflow verification (2026-09-23 local time)
+
+The complete Verify workflow was executed with act 0.2.89 on Docker Desktop, using its Ubuntu runner image. Both jobs passed: Actionlint 1.7.12, ShellCheck, syntax checks, 28 unit tests, both image builds, eight Docker integration checkpoints, Trivy scans and fixture-volume cleanup. CI now uses named volumes so Docker-in-Docker-style runner paths cannot accidentally refer to the wrong host directory.
+
+Trivy 0.74.0 initially found four fixable HIGH vulnerabilities in npm bundled with the admin base image (brace-expansion, ip-address and tar). The runtime does not use npm or Yarn; removing these package managers cleared the gate. Both rebuilt images have zero fixable HIGH/CRITICAL findings under this policy. This is not a claim of zero vulnerabilities of every severity or coverage of the proprietary game downloaded at runtime.
+
+GHCR, release and scheduled-audit workflow graphs passed act dry runs. Actual local OCI builds for both images succeeded; their archives were opened and checked for SPDX SBOM and SLSA v1 provenance statements. GitHub package authentication/publication, hosted artifact uploads, repository rules and remote code-scanning ingestion require a real GitHub run and were not claimed as locally tested. No images were pushed to GHCR.

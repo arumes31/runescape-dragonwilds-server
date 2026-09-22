@@ -1,0 +1,14 @@
+# Named volumes also work when act's runner talks to the host Docker daemon.
+services:
+  game:
+    volumes: !override
+      - fixture-server-files:/home/steam/server-files
+      - fixture-backups:/backups
+  admin:
+    volumes: !override
+      - /var/run/docker.sock:/var/run/docker.sock
+      - admin-state:/data
+      - fixture-server-files:/game-data:ro
+volumes:
+  fixture-server-files:
+  fixture-backups:

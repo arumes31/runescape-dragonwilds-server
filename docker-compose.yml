@@ -2,7 +2,7 @@ name: ${COMPOSE_PROJECT_NAME:-dragonwilds}
 services:
   game:
     build: .
-    image: dragonwilds-server:local
+    image: ${GAME_IMAGE:-dragonwilds-server:local}
     platform: linux/amd64
     container_name: ${COMPOSE_PROJECT_NAME:-dragonwilds}-game
     # Fail stopped on game/update failure; Docker must not bypass the 2-hour update guard.
@@ -34,7 +34,7 @@ services:
       options: { max-size: "10m", max-file: "3" }
   admin:
     build: ./admin
-    image: dragonwilds-admin:local
+    image: ${ADMIN_IMAGE:-dragonwilds-admin:local}
     restart: unless-stopped
     ports:
       - "${ADMIN_BIND_IP:-0.0.0.0}:${ADMIN_PORT:-8080}:8080"

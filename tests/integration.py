@@ -36,10 +36,14 @@ assert env['ADMIN_PASSWORD'] not in logs
 print('PASS: authenticated logs, fixture identification, password redaction')
 api('restart', {})
 wait_for(lambda value: not value['busy'] and value['startedAt'] != before['startedAt'] and value['health'] == 'healthy', 'restart through admin API')
-config = root / 'test-results/server-files/RSDragonwilds/Saved/Config/LinuxServer/DedicatedServer.ini'
-assert 'ServerGuid=fixture-stable-identity' in config.read_text()
-assert 'KnownPlayerList=fixture-banned-player' in config.read_text()
-assert (root / 'test-results/server-files/graceful-stop.txt').exists()
+def fixture_file(path):
+    return subprocess.check_output(['docker', 'exec', 'dragonwilds-test-game', 'cat',
+        '/home/steam/server-files/' + path], text=True)
+
+config = fixture_file('RSDragonwilds/Saved/Config/LinuxServer/DedicatedServer.ini')
+assert 'ServerGuid=fixture-stable-identity' in config
+assert 'KnownPlayerList=fixture-banned-player' in config
+assert 'SIGTERM received' in fixture_file('graceful-stop.txt')
 print('PASS: SIGTERM delivery and persistent server identity / ban record')
 api('stop', {})
 wait_for(lambda value: not value['busy'] and not value['running'], 'stop through admin API')
