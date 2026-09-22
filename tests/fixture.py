@@ -17,7 +17,7 @@ assert f'-Port={port}' in sys.argv, 'Game port argument missing'
 assert f'-ini:Engine:[/Script/OnlineSubsystemUtils.OnlineBeaconHost]:ListenPort={port + 1111}' in sys.argv, 'Beacon port argument missing'
 for value in (port, port + 1111):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(('0.0.0.0', value))
+    sock.bind(('127.0.0.1', value))
     sockets.append(sock)
 print('TEST FIXTURE ONLY: lifecycle and UDP probe, not the Dragonwilds game', flush=True)
 print(f'Fixture running as uid={os.getuid()} on {port}/{port+1111}', flush=True)
