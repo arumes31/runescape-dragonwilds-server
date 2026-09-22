@@ -1,109 +1,116 @@
-<!-- markdownlint-disable-next-line -->
-![marketing_assets_banner](https://github.com/user-attachments/assets/b8b4ae5c-06bb-46a7-8d94-903a04595036)
-[![GitHub License](https://img.shields.io/github/license/indifferentbroccoli/runescape-dragonwilds-server-docker?style=for-the-badge&color=6aa84f)](https://github.com/indifferentbroccoli/runescape-dragonwilds-server-docker/blob/main/LICENSE)
-[![GitHub Release](https://img.shields.io/github/v/release/indifferentbroccoli/runescape-dragonwilds-server-docker?style=for-the-badge&color=6aa84f)](https://github.com/indifferentbroccoli/runescape-dragonwilds-server-docker/releases)
-[![GitHub Repo stars](https://img.shields.io/github/stars/indifferentbroccoli/runescape-dragonwilds-server-docker?style=for-the-badge&color=6aa84f)](https://github.com/indifferentbroccoli/runescape-dragonwilds-server-docker)
-[![Discord](https://img.shields.io/discord/798321161082896395?style=for-the-badge&label=Discord&labelColor=5865F2&color=6aa84f)](https://discord.gg/indifferentbroccoli)
-[![Docker Pulls](https://img.shields.io/docker/pulls/indifferentbroccoli/runescape-dragonwilds-server-docker?style=for-the-badge&color=6aa84f)](https://hub.docker.com/r/indifferentbroccoli/runescape-dragonwilds-server-docker)
+# Dragonwilds server + admin panel
 
-Game server hosting
+Local extension of [indifferentbroccoli/runescape-dragonwilds-server-docker](https://github.com/indifferentbroccoli/runescape-dragonwilds-server-docker), retaining its GPL-3.0 license. Built for **Linux x86_64**, Docker Engine and Docker Compose. Native ARM is not supported by the supplied game binary.
 
-Fast RAM, high-speed internet
+## Included
 
-Eat lag for breakfast
+- Password-protected web panel with original Dragonwilds-inspired artwork, live logs, log search/export, CPU/RAM, health and start/stop/restart controls.
+- `ADMIN_GUI_PASSWORD` and public URL (`ADMIN_ORIGINS`) configured through Docker environment variables.
+- Installed and latest **Steam build IDs**, using the installed appmanifest and Valve SteamCMD metadata, not guessed game version strings.
+- Checks every five minutes; a newer public build triggers an update restart. **At most one automatic restart attempt every two hours**, persisted in the admin-state volume. Failed attempts count. **Manual UI restarts bypass the limit and do not reset it.**
+- Pre-update offline backups and retention, configuration validation, game identity/ban-list preservation, and graceful signal forwarding.
 
-[Try our RuneScape: DragonWilds server hosting free for 2 days!](https://indifferentbroccoli.com/runescape-dragon-wilds-server-hosting)
+## Linux deployment
 
-## RuneScape: DragonWilds Dedicated Server Docker
-
-A Docker container for running a RuneScape: DragonWilds dedicated server using DepotDownloader.
-
-## Server Requirements
-
-| Resource | Minimum       | Recommended |
-|----------|---------------|-------------|
-| CPU      | 4 cores       | 4+ cores    |
-| RAM      | 8GB           | 16GB        |
-| Storage  | 10GB          | 20GB        |
-
-> [!NOTE]
-> RAM required is 2GB + 1GB per player. For a full 6-player server you need 8GB.
-
-## How to use
-
-Copy the `.env.example` file to a new file called `.env`. Then use either `docker compose` or `docker run`.
-
-### Docker Compose
-
-```yaml
-services:
-  runescape-dragonwilds:
-    image: indifferentbroccoli/runescape-dragonwilds-server-docker
-    restart: unless-stopped
-    container_name: runescape-dragonwilds
-    stop_grace_period: 30s
-    ports:
-      - 7777:7777/udp
-    env_file:
-      - .env
-    volumes:
-      - ./server-files:/home/steam/server-files
-```
-
-Then run:
+Use an x86_64 host with at least 8 GB RAM for six players and 20 GB free disk, plus room for backups. First install requires Steam network access.
 
 ```bash
-docker-compose up -d
+cp .env.example .env
+# Edit .env: OWNER_ID, ADMIN_PASSWORD, ADMIN_GUI_PASSWORD and ADMIN_ORIGINS.
+# Generate passwords, for example with: openssl rand -hex 24
+# OWNER_ID is your 32-character hexadecimal Player ID from in-game Settings, not Steam ID.
+# Set DOCKER_GID to: stat -c '%g' /var/run/docker.sock
+chmod 600 .env
+bash scripts/deploy.sh
 ```
 
-### Docker Run
+The first startup installs/validates the server; large downloads can take longer than the deployment command's 20-minute readiness wait. If so, inspect `docker compose logs -f game` and `docker compose ps`. Do not launch another copy against the same data directory.
+
+Required settings:
+
+| Variable | Purpose |
+| --- | --- |
+| `OWNER_ID` | Real in-game Player ID. Without one, ownership and player joins cannot be verified. |
+| `ADMIN_PASSWORD` | In-game Server Management password. |
+| `ADMIN_GUI_PASSWORD` | Separate panel login password, at least 20 characters. |
+| `ADMIN_ORIGINS` | Exact public URL, e.g. `https://dragonwilds.example.net`. Comma-separated URLs permitted; no path or trailing slash. |
+| `DOCKER_GID` | Host Docker socket group ID so the non-root admin process can use it. |
+| `DEFAULT_PORT` / `BEACON_PORT` | Defaults 7777 / 8888. Beacon must be game port + 1111. |
+
+The panel binds to **0.0.0.0:8080 by default**, as requested. `ADMIN_BIND_IP` and `ADMIN_PORT` can override this. Configure `.env`, then recreate containers to apply environment changes: `docker compose up -d`. A simple restart does not reload `.env`.
+
+### Reverse proxy
+
+Terminate HTTPS at your proxy and preserve the original `Host` header. Set `ADMIN_ORIGINS` to that exact HTTPS URL; HTTPS-only origins automatically enable Secure session cookies. Example Nginx location inside your existing TLS server block:
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+If the proxy is on another machine, use the Docker host's private IP instead. Restrict incoming panel-port access to the proxy. The game uses UDP and does not go through this HTTP proxy. Forward **both game and beacon UDP ports**, keeping each external and internal port number identical. On the same LAN, direct-connect to the server's LAN address if the router does not support NAT loopback.
+
+The admin service has Docker socket access. Even though its HTTP API restricts controls to this project's `game` service and checks its Compose labels, the socket grants host-level Docker authority to the admin container. Treat it as a trusted management service. No arbitrary shell/exec endpoint is exposed.
+
+## Steam patching and restart protection
+
+SteamCMD installs app 4019830 and writes `server-files/steamapps/appmanifest_4019830.acf`. The panel only recognizes an installed build when the manifest reports a fully installed state. New installs, incomplete downloads and legacy DepotDownloader-only installations show **Unknown / not installed** until a successful SteamCMD validation.
+
+The admin service independently queries Valve SteamCMD for the current public build every five minutes. Steam failures are visible and never trigger a restart. A deliberately stopped or crashed game container stays stopped. `UPDATE_ON_START=false` also prevents automatic patching. Set `AUTO_UPDATE=false` to show versions without automatic updates.
+
+The game service intentionally has `restart: "no"`: Docker's own crash-loop policy must not bypass the two-hour guard. If an update or game startup fails, inspect logs and use the UI's manual Start/Restart after fixing the cause. Start the deployment after a host reboot using `docker compose up -d`. The admin service itself uses `unless-stopped`.
+
+The optional `AUTO_UPDATE_UTC_HOUR=0..23` adds a daily maintenance restart; default `off`. It shares the same automatic cooldown and also skips stopped servers. Cooldown state is recorded **before** issuing a restart. Keep the `admin-state` volume: deleting it resets restart history. Do not run multiple admin replicas. Manual restarts do not affect this timestamp.
+
+Container/base-OS patches are separate from game patches: run `bash scripts/deploy.sh` to rebuild reviewed local source with fresh base images and package indexes. It never automatically pulls unreviewed GitHub commits. Host kernel/Docker updates are managed by your Linux host.
+
+## Configuration and world data
+
+- `server-files/` persists installation, INI, worlds and Steam manifest.
+- `backups/` contains compressed copies of the full `RSDragonwilds/Saved` tree, taken before startup updates while the game is stopped. Default retention: last seven successful archives (`BACKUP_KEEP`). Backups include game settings/passwords: protect this folder.
+- `GENERATE_SETTINGS=true` updates only container-managed INI keys and preserves the server GUID, repeated KnownPlayerList entries (including bans/admins), unknown keys and sections.
+- `GENERATE_SETTINGS=false` keeps an existing INI byte-for-byte. First startup still creates a config. Direct `docker run` also accepts PR #7's `REGENERATE_SERVER_INI_ON_RESTART=false` alias.
+- Keep `.env` comments on their own lines. Use single quotes for passwords containing literal `$` or `#` so Compose does not interpolate them. Multiline/quoted INI values and filename-unsafe world names are rejected before downloading.
+- `DEFAULT_WORLD_NAME` names a newly created world and is used in the Worlds browser. Changing it does not rename or replace existing saves. `SERVER_NAME` is the server's separate display name.
+
+To restore: stop the game (`docker compose stop game`), preserve the current Saved directory separately, inspect your chosen trusted archive, extract its `Saved/` directory into `server-files/RSDragonwilds/`, then `docker compose start game`. Never extract untrusted archives or overwrite a live world. Keep an off-host copy of backups. A crash/forced kill can only preserve the game's last completed save.
+
+## Game commands and possible additions
+
+| Feature | Status |
+| --- | --- |
+| Start, stop, restart, logs, resource monitoring | Implemented via Docker. |
+| Steam versions, patch detection, automatic restart protection | Implemented and regression-tested. |
+| Backup before update / preservation of moderation state | Implemented. |
+| Ban/unban and admin privileges | Supported through the game's own Server Management screen; not exposed as an unverified web command. |
+| Web chat / broadcast announcements / arbitrary admin commands | No supported remote chat/RCON/API verified in the reviewed official sources. Needs a documented game transport before adding working controls. |
+| Live online-player list / kick / save-now | No authoritative remote API verified. Log-derived counts would be estimates and are not used to decide restart safety. |
+| Always simulate while empty | Upstream issue #9 appears to be game behavior. No supported no-pause option verified. |
+| Backup browser, stopped-server world import/restore, notifications | Feasible additions with their own validation and tests. Not represented as implemented. |
+
+Official references: [Jagex dedicated-server guide](https://dragonwilds.runescape.com/news/how-to-dedicated-servers), [official container documentation](https://github.com/runescape/rsdw-dedicated), [Valve SteamCMD](https://developer.valvesoftware.com/wiki/SteamCMD). The guide documents in-game moderation and warns that live INI edits are overwritten; this implementation therefore does not edit a running game's settings.
+
+## Tests
+
+No npm or Python third-party packages are required for the tests.
 
 ```bash
-docker run -d \
-    --restart unless-stopped \
-    --name runescape-dragonwilds \
-    --stop-timeout 30 \
-    -p 7777:7777/udp \
-    --env-file .env \
-    -v ./server-files:/home/steam/server-files \
-    indifferentbroccoli/runescape-dragonwilds-server-docker
+python3 -m unittest discover -s tests -p 'test_*.py' -v
+node --test tests/*.test.mjs
+shellcheck -x -P SCRIPTDIR scripts/*.sh
+python3 tests/prepare_fixture.py
+docker compose --env-file .env.test.local build --pull
+docker compose --env-file .env.test.local up -d --wait --wait-timeout 150
+python3 tests/integration.py
 ```
 
-## Environment Variables
+The fixture binds UDP and handles shutdown but **is not the game**. It is clearly labeled in its logs. Integration tests use only the `dragonwilds-test` project and test start/stop/restart against real Docker, persistence, authentication, resource data, and graceful shutdown. The test panel runs at `http://localhost:18089`; its generated password is in `.env.test.local`. Keep test and production environment files separate.
 
-| Variable           | Default            | Info                                                                                      |
-|--------------------|--------------------|-------------------------------------------------------------------------------------------|
-| PUID               | 1000               | User ID for file permissions                                                              |
-| PGID               | 1000               | Group ID for file permissions                                                             |
-| UPDATE_ON_START    | true               | If set to false, skips downloading and validating server files on startup                 |
-| OWNER_ID           |                    | **Required.** Your RuneScape: DragonWilds Player ID (found in Settings Menu in-game)     |
-| SERVER_NAME        | DragonWildsServer  | Display name of the server                                                                |
-| DEFAULT_WORLD_NAME | MyWorld            | Name of the default world created on first startup                                        |
-| ADMIN_PASSWORD     |                    | **Required.** Password to access Server Management in-game                               |
-| WORLD_PASSWORD     |                    | Optional join password. Leave empty for a public server                                   |
-| DEFAULT_PORT       | 7777               | The UDP port the server listens on                                                        |
-| MAX_PLAYERS        | 6                  | Maximum number of players allowed on the server                                           |
+See [UPSTREAM-REVIEW.md](UPSTREAM-REVIEW.md) for every upstream issue/PR disposition and [TEST-RESULTS.md](TEST-RESULTS.md) for the actual local verification and limitations. CI builds both images and runs the same isolated integration suite.
 
-> [!NOTE]
-> If your server doesn't appear, check that UDP port 7777 is forwarded through your firewall/router and that `OWNER_ID` and `ADMIN_PASSWORD` are set.
+## Artwork and licensing
 
-## Port Forwarding
-
-Forward **7777 UDP only**. Every router between you and your ISP will need port forwarding configured. See [portforward.com](https://portforward.com) for router-specific guides.
-
-> [!IMPORTANT]
-> The internal and external ports **must match**. If you change `DEFAULT_PORT`, update the port mapping in your compose file to match — e.g. `9000:9000/udp` with `DEFAULT_PORT=9000`. Mismatched ports will cause players to be kicked back to the title screen on join.
-
-## User Management
-
-Dedicated Servers divide users into three categories:
-
-- **Owner** — the player whose Player ID matches `OWNER_ID` in config
-- **Admin** — anyone who entered the `ADMIN_PASSWORD` in the Server Management screen
-- **Regular users**
-
-Owners can ban and unban anyone (online or offline). Admins can ban regular users who are online.
-
-## Volumes
-
-- `/home/steam/server-files` — Server installation files, saves, and configuration
+The repository's original GPL-3.0 license and upstream attribution are retained. The landscape is newly generated fan-inspired artwork; the rune icon is an original SVG. Neither is an official Jagex asset or endorsement. RuneScape and Dragonwilds remain their respective owners' trademarks.

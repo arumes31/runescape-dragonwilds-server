@@ -1,0 +1,10 @@
+.env
+.env.*.local
+secrets/
+server-files/
+backups/
+test-results/
+__pycache__/
+*.pyc
+docs/plans/
+dist/

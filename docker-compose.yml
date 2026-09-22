@@ -1,14 +1,61 @@
----
+name: ${COMPOSE_PROJECT_NAME:-dragonwilds}
 services:
-  runescape-dragonwilds:
-    image: indifferentbroccoli/runescape-dragonwilds-server-docker
+  game:
+    build: .
+    image: dragonwilds-server:local
     platform: linux/amd64
-    restart: unless-stopped
-    container_name: runescape-dragonwilds
-    stop_grace_period: 30s
+    container_name: ${COMPOSE_PROJECT_NAME:-dragonwilds}-game
+    # Fail stopped on game/update failure; Docker must not bypass the 2-hour update guard.
+    restart: "no"
+    stop_grace_period: 120s
     ports:
-      - 7777:7777/udp
-    env_file:
-      - .env
+      - "${GAME_BIND_IP:-0.0.0.0}:${DEFAULT_PORT:-7777}:${DEFAULT_PORT:-7777}/udp"
+      - "${GAME_BIND_IP:-0.0.0.0}:${BEACON_PORT:-8888}:${BEACON_PORT:-8888}/udp"
+    environment:
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      OWNER_ID: ${OWNER_ID:?Set OWNER_ID in .env}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
+      WORLD_PASSWORD: ${WORLD_PASSWORD:-}
+      SERVER_NAME: ${SERVER_NAME:-DragonWildsServer}
+      DEFAULT_WORLD_NAME: ${DEFAULT_WORLD_NAME:-MyWorld}
+      DEFAULT_PORT: ${DEFAULT_PORT:-7777}
+      BEACON_PORT: ${BEACON_PORT:-8888}
+      MAX_PLAYERS: ${MAX_PLAYERS:-6}
+      MULTIHOME: ${MULTIHOME:-}
+      UPDATE_ON_START: ${UPDATE_ON_START:-true}
+      GENERATE_SETTINGS: ${GENERATE_SETTINGS:-true}
+      BACKUP_KEEP: ${BACKUP_KEEP:-7}
     volumes:
-      - ./server-files:/home/steam/server-files
+      - ${SERVER_DATA_PATH:-./server-files}:/home/steam/server-files
+      - ${BACKUP_PATH:-./backups}:/backups
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+  admin:
+    build: ./admin
+    image: dragonwilds-admin:local
+    restart: unless-stopped
+    ports:
+      - "${ADMIN_BIND_IP:-0.0.0.0}:${ADMIN_PORT:-8080}:8080"
+    environment:
+      ADMIN_GUI_PASSWORD: ${ADMIN_GUI_PASSWORD:?Set ADMIN_GUI_PASSWORD in .env (at least 20 characters)}
+      GAME_CONTAINER: ${COMPOSE_PROJECT_NAME:-dragonwilds}-game
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-dragonwilds}
+      ADMIN_ORIGINS: ${ADMIN_ORIGINS:-http://localhost:8080,http://127.0.0.1:8080}
+      AUTO_UPDATE_UTC_HOUR: ${AUTO_UPDATE_UTC_HOUR:-off}
+      AUTO_UPDATE: ${AUTO_UPDATE:-true}
+    group_add: ["${DOCKER_GID:-0}"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - admin-state:/data
+      - ${SERVER_DATA_PATH:-./server-files}:/game-data:ro
+    read_only: true
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    tmpfs: [/tmp]
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+volumes:
+  admin-state:

@@ -1,5 +1,5 @@
 # BUILD THE SERVER IMAGE
-FROM --platform=linux/amd64 debian:bookworm-slim
+FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -8,25 +8,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     unzip \
     procps \
+    lib32gcc-s1 \
     libicu-dev \
-    gettext-base \
+    python3 \
+    gosu \
+    tini \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Install .NET 8 runtime (required for DepotDownloader)
-RUN curl -sL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh && \
-    chmod +x /tmp/dotnet-install.sh && \
-    /tmp/dotnet-install.sh --channel 8.0 --runtime dotnet --install-dir /usr/share/dotnet && \
-    ln -s /usr/share/dotnet/dotnet /usr/bin/dotnet && \
-    rm /tmp/dotnet-install.sh
-
-# Download DepotDownloader
+# Platform-specific release includes the .NET runtime.
 ARG DEPOT_DOWNLOADER_VERSION=3.4.0
-RUN curl -sL "https://github.com/SteamRE/DepotDownloader/releases/download/DepotDownloader_${DEPOT_DOWNLOADER_VERSION}/DepotDownloader-linux-x64.zip" -o /tmp/dd.zip && \
+RUN curl -fSL --retry 3 "https://github.com/SteamRE/DepotDownloader/releases/download/DepotDownloader_${DEPOT_DOWNLOADER_VERSION}/DepotDownloader-linux-x64.zip" -o /tmp/dd.zip && \
     mkdir -p /depotdownloader && \
     unzip /tmp/dd.zip -d /depotdownloader && \
     chmod +x /depotdownloader/DepotDownloader && \
     rm /tmp/dd.zip
+
+RUN mkdir -p /opt/steamcmd && \
+    curl -fSL --retry 3 https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz | tar -xz -C /opt/steamcmd
 
 RUN useradd -m -s /bin/bash steam
 
@@ -40,22 +39,24 @@ ENV HOME=/home/steam \
     SERVER_NAME="DragonWildsServer" \
     DEFAULT_WORLD_NAME="MyWorld" \
     OWNER_ID="" \
-    ADMIN_PASSWORD="" \
-    WORLD_PASSWORD="" \
     MAX_PLAYERS=6 \
     MULTIHOME="" \
-    UPDATE_ON_START=true
+    UPDATE_ON_START=true \
+    PUID=1000 \
+    PGID=1000
 
 COPY ./scripts /home/steam/server/
 
 COPY branding /branding
 
-RUN mkdir -p /home/steam/server-files && \
-    chmod +x /home/steam/server/*.sh
+RUN mkdir -p /home/steam/server-files /backups && \
+    sed -i 's/\r$//' /home/steam/server/*.sh && \
+    chmod +x /home/steam/server/*.sh && \
+    /depotdownloader/DepotDownloader --version
 
 WORKDIR /home/steam/server
 
-HEALTHCHECK --start-period=5m \
-            CMD pgrep -f "RSDragonwilds" > /dev/null || exit 1
+HEALTHCHECK --start-period=15m --interval=30s --timeout=5s --retries=3 \
+    CMD python3 /home/steam/server/healthcheck.py
 
-ENTRYPOINT ["/home/steam/server/init.sh"]
+ENTRYPOINT ["/usr/bin/tini", "-g", "--", "/home/steam/server/init.sh"]

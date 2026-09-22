@@ -1,70 +1,16 @@
 #!/bin/bash
-# shellcheck source=scripts/functions.sh
-source "/home/steam/server/functions.sh"
-
-LogAction "Set file permissions"
-
-if [ -z "${PUID}" ] || [ -z "${PGID}" ]; then
-    LogError "PUID and PGID not set. Please set these in the environment variables."
-    exit 1
-else
-    usermod -o -u "${PUID}" steam
-    groupmod -o -g "${PGID}" steam
-fi
-
-chown -R steam:steam /home/steam/
-
-cat /branding
-
-if [ "${UPDATE_ON_START:-true}" = "true" ]; then
-    install
-else
-    LogWarn "UPDATE_ON_START is set to false, skipping server update"
-fi
-
-chown -R steam:steam /home/steam/server-files
-chmod +x /home/steam/server-files/RSDragonwilds/Binaries/Linux/RSDragonwildsServer-Linux-Shipping 2>/dev/null || true
-chmod +x /home/steam/server-files/RSDragonwilds/Plugins/Developer/Sentry/Binaries/Linux/crashpad_handler 2>/dev/null || true
-
-if [ -z "${OWNER_ID}" ]; then
-    LogError "OWNER_ID is not set. The server cannot start without your RuneScape: DragonWilds Player ID."
-    LogError "Find your Player ID in-game at the bottom of the Settings Menu."
+set -Eeuo pipefail
+export SERVER_FILES="${SERVER_FILES:-/home/steam/server-files}"
+export PUID="${PUID:-1000}" PGID="${PGID:-1000}"
+python3 /home/steam/server/config.py --check
+if [[ "$(uname -m)" != x86_64 ]]; then
+    echo 'The game requires an x86_64 Linux host; native ARM is unsupported.' >&2
     exit 1
 fi
-
-CONFIG_DIR="/home/steam/server-files/RSDragonwilds/Saved/Config/LinuxServer"
-CONFIG_FILE="$CONFIG_DIR/DedicatedServer.ini"
-
-mkdir -p "$CONFIG_DIR"
-LogInfo "Writing DedicatedServer.ini"
-envsubst > "$CONFIG_FILE" << 'TEMPLATE'
-[SectionsToSave]
-bCanSaveAllSections=true
-
-[/Script/Dominion.DedicatedServerSettings]
-AdminPassword=${ADMIN_PASSWORD}
-OwnerId=${OWNER_ID}
-WorldPassword=${WORLD_PASSWORD}
-ServerName=${SERVER_NAME}
-DefaultWorldName=${DEFAULT_WORLD_NAME}
-ServerGuid=
-TEMPLATE
-chown steam:steam "$CONFIG_FILE"
-
-# shellcheck disable=SC2317
-term_handler() {
-    if ! shutdown_server; then
-        kill -SIGTERM "$(pgrep -f RSDragonwilds)"
-    fi
-    tail --pid="$killpid" -f 2>/dev/null
-}
-
-trap 'term_handler' SIGTERM
-
-# Start the server as steam user
-export DEFAULT_PORT SERVER_NAME DEFAULT_WORLD_NAME OWNER_ID ADMIN_PASSWORD WORLD_PASSWORD MAX_PLAYERS MULTIHOME
-
-su -m steam -c "cd /home/steam/server && ./start.sh" &
-
-killpid="$!"
-wait "$killpid"
+usermod -o -u "$PUID" steam
+groupmod -o -g "$PGID" steam
+mkdir -p "$SERVER_FILES" /backups
+chown steam:steam /home/steam "$SERVER_FILES" /backups
+# Repair files created by earlier upstream versions as root.
+find "$SERVER_FILES" /backups -xdev \( ! -uid "$PUID" -o ! -gid "$PGID" \) -exec chown -h steam:steam {} +
+exec gosu steam /home/steam/server/start.sh

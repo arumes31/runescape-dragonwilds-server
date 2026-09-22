@@ -1,86 +1,24 @@
 #!/bin/bash
-
-#================
-# Log Definitions
-#================
-export LINE='\n'                        # Line Break
-export RESET='\033[0m'                  # Text Reset
-export WhiteText='\033[0;37m'           # White
-
-# Bold
-export RedBoldText='\033[1;31m'         # Red
-export GreenBoldText='\033[1;32m'       # Green
-export YellowBoldText='\033[1;33m'      # Yellow
-export CyanBoldText='\033[1;36m'        # Cyan
-#================
-# End Log Definitions
-#================
-
-LogInfo() {
-  Log "$1" "$WhiteText"
-}
-LogWarn() {
-  Log "$1" "$YellowBoldText"
-}
-LogError() {
-  Log "$1" "$RedBoldText"
-}
-LogSuccess() {
-  Log "$1" "$GreenBoldText"
-}
-LogAction() {
-  Log "$1" "$CyanBoldText" "====" "===="
-}
-Log() {
-  local message="$1"
-  local color="$2"
-  local prefix="$3"
-  local suffix="$4"
-  printf "$color%s$RESET$LINE" "$prefix$message$suffix"
-}
-
-install() {
-  LogAction "Starting server install"
-  LogInfo "Installing RuneScape: DragonWilds Dedicated Server"
-
-  /depotdownloader/DepotDownloader \
-    -app 4019830 \
-    -os linux \
-    -dir /home/steam/server-files \
-    -validate
-
-  LogSuccess "Server install complete"
-}
-
-# Attempt to shutdown the server gracefully
-# Returns 0 if it is shutdown
-# Returns 1 if it is not able to be shutdown
-shutdown_server() {
-  local return_val=0
-  LogAction "Attempting graceful server shutdown"
-
-  local pid
-  pid=$(pgrep -f "RSDragonwilds")
-
-  if [ -n "$pid" ]; then
-    kill -SIGTERM "$pid"
-
-    local count=0
-    while [ $count -lt 30 ] && kill -0 "$pid" 2>/dev/null; do
-      sleep 1
-      count=$((count + 1))
-    done
-
-    if kill -0 "$pid" 2>/dev/null; then
-      LogWarn "Server did not shutdown gracefully, forcing shutdown"
-      return_val=1
-    else
-      LogSuccess "Server shutdown gracefully"
+# SteamCMD owns appmanifest_4019830.acf, providing an authoritative installed build ID.
+install_server() {
+    local attempt log
+    mkdir -p /home/steam/.steamcmd
+    if [[ ! -f /home/steam/.steamcmd/steamcmd.sh ]]; then
+        cp -a /opt/steamcmd/. /home/steam/.steamcmd/
     fi
-  else
-    LogWarn "Server process not found"
-    return_val=1
-  fi
-
-  return "$return_val"
+    log=$(mktemp)
+    for attempt in 1 2 3; do
+        echo "Installing/verifying game files (attempt $attempt/3)"
+        if /home/steam/.steamcmd/steamcmd.sh +force_install_dir "$SERVER_FILES" \
+            +login anonymous +app_update 4019830 validate +quit 2>&1 | tee "$log"; then
+            if grep -Fq "Success! App '4019830' fully installed." "$log"; then
+                rm -f "$log"
+                return 0
+            fi
+        fi
+        if [[ "$attempt" -lt 3 ]]; then sleep 10; fi
+    done
+    rm -f "$log"
+    echo 'Game update failed after three attempts; server will not start.' >&2
+    return 1
 }

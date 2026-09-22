@@ -1,0 +1,31 @@
+name: Verify container and admin
+on:
+  pull_request:
+  push:
+    branches: [main, 'feature/**']
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m unittest discover -s tests -p 'test_*.py' -v
+      - run: node --test tests/*.test.mjs
+      - run: shellcheck -x -P SCRIPTDIR scripts/*.sh
+      - run: python tests/prepare_fixture.py
+      - run: docker compose --env-file .env.test.local config --quiet
+      - run: docker compose --env-file .env.test.local build --pull
+      - run: docker compose --env-file .env.test.local up -d --wait --wait-timeout 150
+      - run: python tests/integration.py
+      - if: always()
+        run: docker compose --env-file .env.test.local logs --no-color
+      - if: always()
+        run: docker compose --env-file .env.test.local down
