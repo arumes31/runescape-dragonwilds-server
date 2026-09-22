@@ -3,6 +3,9 @@ ENV NODE_ENV=production
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates lib32gcc-s1 && \
     rm -rf /var/lib/apt/lists/* && mkdir -p /opt/steamcmd && \
     curl -fSL --retry 3 https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz | tar -xz -C /opt/steamcmd
+# This dependency-free service only needs Node; package managers add unused attack surface.
+RUN rm -rf /usr/local/lib/node_modules/npm /opt/yarn-* && \
+    rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/yarn /usr/local/bin/yarnpkg
 WORKDIR /app
 COPY server.mjs steam.mjs ./
 COPY public ./public
