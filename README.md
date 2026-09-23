@@ -1,47 +1,218 @@
 # Dragonwilds server + admin panel
 
-Local extension of [indifferentbroccoli/runescape-dragonwilds-server-docker](https://github.com/indifferentbroccoli/runescape-dragonwilds-server-docker), retaining its GPL-3.0 license. Built for **Linux x86_64**, Docker Engine and Docker Compose. Native ARM is not supported by the supplied game binary.
+A Docker deployment for the RuneScape: Dragonwilds dedicated server, with a password-protected web panel, Steam update checks, controlled restarts, offline backups, and persistent world data. This project extends [indifferentbroccoli/runescape-dragonwilds-server-docker](https://github.com/indifferentbroccoli/runescape-dragonwilds-server-docker) and retains its GPL-3.0 license.
 
-## Included
+The supplied containers target **Linux x86_64 / amd64**. The game is installed at runtime from Steam dedicated-server app **4019830**. Native ARM and ARM emulation are unsupported by this deployment.
 
-- Password-protected web panel with original Dragonwilds-inspired artwork, live logs, log search/export, CPU/RAM, health and start/stop/restart controls.
-- `ADMIN_GUI_PASSWORD` and public URL (`ADMIN_ORIGINS`) configured through Docker environment variables.
-- Installed and latest **Steam build IDs**, using the installed appmanifest and Valve SteamCMD metadata, not guessed game version strings.
-- Checks every five minutes; a newer public build triggers an update restart. **At most one automatic restart attempt every two hours**, persisted in the admin-state volume. Failed attempts count. **Manual UI restarts bypass the limit and do not reset it.**
-- Pre-update offline backups and retention, configuration validation, game identity/ban-list preservation, and graceful signal forwarding.
+## Contents
 
-## Linux deployment
+- [Features and boundaries](#features-and-boundaries)
+- [Requirements](#requirements)
+- [Quick start](#quick-start)
+- [Configuration reference](#configuration-reference)
+- [Networking and HTTPS](#networking-and-https)
+- [Using the admin panel](#using-the-admin-panel)
+- [Updates and restart protection](#updates-and-restart-protection)
+- [Data, configuration, and backups](#data-configuration-and-backups)
+- [Operations](#operations)
+- [Admin HTTP API](#admin-http-api)
+- [Troubleshooting](#troubleshooting)
+- [Architecture and repository layout](#architecture-and-repository-layout)
+- [Development and verification](#development-and-verification)
+- [GitHub automation and releases](#github-automation-and-releases)
+- [Artwork and licensing](#artwork-and-licensing)
 
-Use an x86_64 host with at least 8 GB RAM for six players and 20 GB free disk, plus room for backups. First install requires Steam network access.
+## Features and boundaries
+
+| Capability | Behavior |
+| --- | --- |
+| Server controls | Start, stop, and restart the project's game container, with confirmation in the panel and a 120-second graceful-stop allowance. |
+| Monitoring | Container state, local health, CPU/RAM, startup stages, recent logs, log search, and log export. |
+| Steam versions | Installed and public Steam build IDs from SteamCMD manifest/metadata. No guessed game version strings. |
+| Automatic patching | Check on panel-service startup and every five minutes; restart for a newer build subject to a UTC maintenance window and a persisted two-hour cooldown. |
+| Manual Steam check | Refresh metadata without directly restarting the game; limited to once per minute. |
+| Daily maintenance | Optional daily restart hour, sharing the window and automatic cooldown. |
+| Save protection | Offline backups before startup updates; retention and preservation of server identity, moderation records, and unmanaged INI fields. |
+| In-game administration | Use the game's Server Management screen for supported ownership/admin/moderation actions. |
+| Web chat, broadcast, kick, save-now, live player list | Not implemented: no authoritative external command/query interface was verified. Log-derived player estimates are not used to decide restart safety. |
+| Backup browser, web restore/import, notifications | Possible future additions; not implemented. |
+
+There is no verified wrapper setting to force world simulation while the server is empty. Real-game command probes did not establish a working external administration transport; the panel therefore exposes only the verified controls listed above.
+
+## Requirements
+
+- An x86_64 Linux host, Docker Engine, and the Docker Compose plugin. The admin client uses Docker API **v1.45**, so the daemon must accept that API version.
+- Bash for the supplied deployment scripts and permission to use the Docker daemon.
+- RAM for the game plus the host and panel. Jagex's guide gives **2 GB + 1 GB per player**, or 8 GB for six players. See the [official server guide](https://dragonwilds.runescape.com/news/how-to-dedicated-servers).
+- Plan for at least **20 GB free disk**, plus space for retained backups and growth; this is the project's deployment allowance.
+- Outbound connectivity for image builds, Steam downloads/metadata, and the game's online services. Both game UDP ports must be reachable by players.
+- A real **32-character hexadecimal Player ID** from in-game Settings. A Steam ID is not a substitute.
+- Separate strong passwords for in-game administration and the web panel.
+
+The images contain their runtime dependencies; production hosts do not need Node or Python installed. Local development uses Node 24, Python 3.11+, and ShellCheck. The CI Compose override requires Compose **2.24.4+** for `!override`.
+
+## Quick start
+
+Clone the repository on the Linux host (or use an extracted deployment archive):
+
+```bash
+git clone https://github.com/arumes31/runescape-dragonwilds-server.git
+cd runescape-dragonwilds-server
+```
+
+Then configure the deployment:
 
 ```bash
 cp .env.example .env
-# Edit .env: OWNER_ID, ADMIN_PASSWORD, ADMIN_GUI_PASSWORD and ADMIN_ORIGINS.
-# Generate passwords, for example with: openssl rand -hex 24
-# OWNER_ID is your 32-character hexadecimal Player ID from in-game Settings, not Steam ID.
-# Set DOCKER_GID to: stat -c '%g' /var/run/docker.sock
 chmod 600 .env
-bash scripts/deploy.sh
+id -u
+id -g
+stat -c '%g' /var/run/docker.sock
+openssl rand -hex 24
 ```
 
-The first startup installs/validates the server; large downloads can take longer than the deployment command's 20-minute readiness wait. If so, inspect `docker compose logs -f game` and `docker compose ps`. Do not launch another copy against the same data directory.
+Edit `.env` before starting:
 
-Required settings:
+1. Set `OWNER_ID` to your real in-game Player ID.
+2. Set `ADMIN_PASSWORD` and a separate `ADMIN_GUI_PASSWORD` of at least 20 characters. Run the password generator again for a separate value.
+3. Set `PUID` and `PGID` to the non-root numeric account/group that should own game data; set `DOCKER_GID` to the socket group reported above.
+4. Set `SERVER_NAME`, `DEFAULT_WORLD_NAME`, and optionally `WORLD_PASSWORD`.
+5. Set `ADMIN_ORIGINS` to the exact URL you will use, including scheme and nonstandard port. For a public deployment, use your HTTPS proxy URL.
+6. Confirm data paths, UDP ports, and the panel binding. By default the panel is published on every host interface at port 8080.
 
-| Variable | Purpose |
+```bash
+bash scripts/deploy.sh
+docker compose ps
+docker compose logs --tail=100 game
+```
+
+The deployment script checks the host architecture and Compose configuration, builds both images with `--pull --no-cache`, then waits up to 20 minutes for readiness. It does not pull Git commits. First startup downloads and validates the game; a slow download can exceed the wait while the containers continue working. Follow `docker compose logs -f game` before taking further action. Never start a second game process against the same data directory.
+
+Open the URL configured in `ADMIN_ORIGINS` and sign in with `ADMIN_GUI_PASSWORD`. For a local-only panel use `ADMIN_BIND_IP=127.0.0.1` and the default localhost origins. After changing environment values, run `docker compose up -d` to recreate affected containers; `docker compose restart` does not reload `.env`.
+
+To find the world, use the game's **Worlds → Public** tab and search its exact, case-sensitive world name. Existing saves retain their own world identity. See the [official joining instructions](https://dragonwilds.runescape.com/news/how-to-dedicated-servers).
+
+### GHCR Docker Compose example
+
+Use [docker-compose.ghcr.yml](docker-compose.ghcr.yml) for a standalone deployment from published images. It includes both services, all environment settings, UDP/panel ports, persistent storage, restart policies, log rotation, and admin security settings, with no local build definitions. Only this Compose file and a configured `.env` are needed on the host; data directories and the admin-state volume are created at startup.
+
+Copy `.env.example` to `.env` and fill the required settings from the quick start. For images published from [arumes31/runescape-dragonwilds-server](https://github.com/arumes31/runescape-dragonwilds-server), also set:
+
+```dotenv
+GAME_IMAGE=ghcr.io/arumes31/runescape-dragonwilds-server:dev
+ADMIN_IMAGE=ghcr.io/arumes31/runescape-dragonwilds-server-admin:dev
+```
+
+The `dev` tags are published by successful main-branch GHCR workflow runs. Wait for publication before pulling them, or choose an available release tag. Use matching game/admin releases, preferably pinned by digest. The GHCR Compose file requires both image variables explicitly.
+
+The image selection in that file is:
+
+```yaml
+services:
+  game:
+    image: ${GAME_IMAGE:?Set GAME_IMAGE in .env to a published GHCR game image}
+  admin:
+    image: ${ADMIN_IMAGE:?Set ADMIN_IMAGE in .env to a published GHCR admin image}
+```
+
+This snippet shows only image selection; deploy the complete linked file. Authenticate to GHCR first if the selected packages are private, then run:
+
+```bash
+docker compose -f docker-compose.ghcr.yml --env-file .env config --quiet
+docker compose -f docker-compose.ghcr.yml --env-file .env pull
+docker compose -f docker-compose.ghcr.yml --env-file .env up -d --no-build --wait --wait-timeout 1200
+docker compose -f docker-compose.ghcr.yml --env-file .env ps
+docker compose -f docker-compose.ghcr.yml --env-file .env logs -f --tail=100 game
+```
+
+Use the same `-f docker-compose.ghcr.yml --env-file .env` options for later stop, restart, update, and teardown commands. To update images, select the published tags/digests in `.env`, then repeat `pull` and `up`. Steam still installs or updates the actual game on startup when `UPDATE_ON_START=true`.
+
+The default `docker-compose.yml` also accepts these image variables, but `scripts/deploy.sh` always builds local source. See [GitHub automation and releases](#github-automation-and-releases) for publication and rollback details.
+
+## Configuration reference
+
+Defaults below describe the supplied Compose deployment and [.env.example](.env.example). Empty required values must be filled before deployment. Boolean game settings accept lowercase `true` or `false`.
+
+### Game settings
+
+| Variable | Default | Meaning / accepted values |
+| --- | --- | --- |
+| `OWNER_ID` | Required | Exactly 32 hexadecimal characters from in-game Settings. |
+| `ADMIN_PASSWORD` | Required | Nonblank password for the game's Server Management screen. Separate from panel authentication. |
+| `WORLD_PASSWORD` | Empty | Optional world access password. |
+| `SERVER_NAME` | `DragonWildsServer` | Server display name. |
+| `DEFAULT_WORLD_NAME` | `MyWorld` | Name used when creating a world; changing it does not rename existing saves. |
+| `DEFAULT_PORT` | `7777` | Game UDP port; integer 1024–64424. |
+| `BEACON_PORT` | `8888` | Must equal `DEFAULT_PORT + 1111`. Set both variables when changing ports. |
+| `MAX_PLAYERS` | `6` | Integer 1–6, supplied to the game through its launch arguments. |
+| `MULTIHOME` | Empty | Optional game `-MULTIHOME` bind address; must make sense inside the container. Usually leave empty. |
+| `PUID` | `1000` | Game-data owner UID; integer 1–2147483647. |
+| `PGID` | `1000` | Game-data owner GID; integer 1–2147483647. |
+| `UPDATE_ON_START` | `true` | Back up existing saves, then install/validate the current Steam build on every start. Required for first installation. |
+| `GENERATE_SETTINGS` | `true` | Merge environment-managed INI fields. `false` preserves an existing INI byte-for-byte; first startup still creates it. |
+| `BACKUP_KEEP` | `7` | Retain 1–100 successful automatic backup archives. |
+
+Configuration is validated before downloading. INI-managed values reject control characters and double quotes. World names must be nonblank and filename-safe: no `/ \ : * ? < > |`, `.`, `..`, or whitespace followed by `#`. Keep comments on their own lines. In `.env`, use single quotes around passwords containing literal `$` or `#` to avoid interpolation/comment surprises.
+
+`GENERATE_SETTINGS=false` does not bypass startup environment validation. Ports and player capacity still come from launch arguments, even when INI generation is disabled.
+
+### Deployment and storage
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `COMPOSE_PROJECT_NAME` | `dragonwilds` | Compose namespace; game container becomes `<project>-game`. Also identifies the allowed control target and named state volume. |
+| `SERVER_DATA_PATH` | `./server-files` | Host bind mount for game installation, worlds, config, logs, and installed manifest. |
+| `BACKUP_PATH` | `./backups` | Host bind mount for offline archives. |
+| `GAME_BIND_IP` | `0.0.0.0` | Host interface on which both UDP ports are published. |
+| `ADMIN_BIND_IP` | `0.0.0.0` | Host interface on which the panel is published. |
+| `ADMIN_PORT` | `8080` | Host panel port; container listens on TCP 8080. Match nonstandard ports in `ADMIN_ORIGINS`. |
+| `DOCKER_GID` | `0` | Supplementary group for access to the host Docker socket. Set it from the actual Linux socket's group ID. |
+| `GAME_IMAGE` | `dragonwilds-server:local` | Game image name/tag or digest. Compose also has a local build definition. |
+| `ADMIN_IMAGE` | `dragonwilds-admin:local` | Admin image name/tag or digest. Compose also has a local build definition. |
+
+Relative data paths are relative to the Compose project directory. Use separate project names, data/backup directories, and published ports for separate deployments. Changing the project name also selects a different admin-state volume, so it changes which persisted restart history and window override are loaded.
+
+### Panel and update policy
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `ADMIN_GUI_PASSWORD` | Required | Panel password, at least 20 characters. |
+| `ADMIN_ORIGINS` | `http://localhost:8080,http://127.0.0.1:8080` | Comma-separated exact HTTP(S) origins. No path, trailing slash, query, or fragment. Host checks use this list. All origins must be HTTPS to enable Secure cookies automatically. |
+| `ADMIN_TRUSTED_PROXIES` | Empty | Comma-separated proxy peer IPs/CIDRs. Empty ignores forwarding headers; universal `/0` trust is rejected. |
+| `AUTO_UPDATE` | `true` | `false` disables newer-build-triggered restarts while keeping metadata checks. It does **not** disable a configured daily restart. |
+| `AUTO_UPDATE_UTC_HOUR` | `off` | Optional daily restart hour, 0–23 UTC; independent of `AUTO_UPDATE`, but still requires startup updates and obeys window/cooldown checks. |
+| `AUTO_UPDATE_WINDOW_UTC` | `anytime` | `anytime` or `HH:MM-HH:MM` UTC, including overnight intervals. Panel overrides persist and take precedence. |
+
+To disable **all scheduled automatic restarts**, use both `AUTO_UPDATE=false` and `AUTO_UPDATE_UTC_HOUR=off`. Manual starts/restarts still install updates when `UPDATE_ON_START=true`.
+
+### Advanced container settings
+
+These are supported by the underlying scripts/services but are **not forwarded by the supplied Compose file**. They require a deliberate Compose override or custom container invocation; adding them to `.env` alone has no effect.
+
+| Setting | Default / behavior |
 | --- | --- |
-| `OWNER_ID` | Real in-game Player ID. Without one, ownership and player joins cannot be verified. |
-| `ADMIN_PASSWORD` | In-game Server Management password. |
-| `ADMIN_GUI_PASSWORD` | Separate panel login password, at least 20 characters. |
-| `ADMIN_ORIGINS` | Exact public URL, e.g. `https://dragonwilds.example.net`. Comma-separated URLs permitted; no path or trailing slash. |
-| `DOCKER_GID` | Host Docker socket group ID so the non-root admin process can use it. |
-| `DEFAULT_PORT` / `BEACON_PORT` | Defaults 7777 / 8888. Beacon must be game port + 1111. |
+| `SERVER_FILES` | Game scripts' installation root; defaults to `/home/steam/server-files`. Mounts and admin read paths must remain consistent if customized. |
+| `REGENERATE_SERVER_INI_ON_RESTART` | Compatibility alias: `false` preserves an existing INI, even if `GENERATE_SETTINGS=true`. |
+| `ADMIN_PASSWORD_FILE` | Admin-service fallback file containing the panel password when `ADMIN_GUI_PASSWORD` is absent. Requires mounting the file and changing Compose's required-password wiring. |
+| `GAME_CONTAINER` | Admin target container; Compose sets it to `<project>-game`. Target must carry the matching Compose project and `game` service labels. |
+| `STATE_FILE` | Admin policy/history file, default `/data/maintenance.json`. |
+| `PORT` | Admin internal HTTP port, default 8080. Customizing requires matching port mapping and health-check changes. |
+| `DEPOT_DOWNLOADER_VERSION` | Game-image **build argument**, default `3.4.0`. DepotDownloader remains bundled for upstream compatibility; the active install/update path uses SteamCMD. |
 
-The panel binds to **0.0.0.0:8080 by default**, as requested. `ADMIN_BIND_IP` and `ADMIN_PORT` can override this. Configure `.env`, then recreate containers to apply environment changes: `docker compose up -d`. A simple restart does not reload `.env`.
+## Networking and HTTPS
 
-### Reverse proxy
+| Traffic | Default | Exposure |
+| --- | --- | --- |
+| Game | UDP 7777 | Reachable by players. |
+| Beacon | UDP 8888 | Reachable by players; always game port + 1111. |
+| Web panel | TCP 8080 | Management access; restrict public access to the HTTPS proxy. |
+| Docker API | Unix socket | Mounted into the admin container; no TCP Docker endpoint is configured. |
 
-Terminate HTTPS at your proxy and preserve the original `Host` header. Set `ADMIN_ORIGINS` to that exact HTTPS URL; HTTPS-only origins automatically enable Secure session cookies. Example Nginx location inside your existing TLS server block:
+Forward **both UDP ports** through the host firewall, cloud firewall, and router as applicable. Keep external and internal numbers identical. The HTTP reverse proxy does not carry game UDP traffic. For custom game port 27777, set beacon 28888 and forward that pair.
+
+### Reverse proxy example
+
+For a proxy on the Docker host, set `ADMIN_BIND_IP=127.0.0.1`, `ADMIN_ORIGINS=https://dragonwilds.example.net`, and terminate TLS in your proxy. An Nginx location inside an existing TLS server block:
 
 ```nginx
 location / {
@@ -52,86 +223,282 @@ location / {
 }
 ```
 
-Set `ADMIN_TRUSTED_PROXIES` to the actual proxy peer IPs/CIDRs as seen by the admin container (comma-separated, for example `172.30.0.2/32` for a proxy with that fixed Docker IP). Docker NAT may make a host proxy appear as a bridge gateway; do not assume it appears as 127.0.0.1. Use the smallest appropriate range and restrict the panel port to your proxy. Empty means no forwarding headers are trusted. Universal `/0` trust is rejected.
+For a proxy on another machine, use the Docker host's reachable private address, adjust `ADMIN_BIND_IP`, and restrict incoming panel-port access to that proxy. For a containerized proxy, use its actual reachable Docker network path; loopback inside that proxy refers to the proxy itself.
 
-The example overwrites client-supplied forwarding headers. In a controlled chain of proxies, each proxy must append its actual peer; the panel walks `X-Forwarded-For` from right to left and stops at the first untrusted address. It ignores forwarding from untrusted peers and rejects malformed forwarding from trusted peers. IPv4-mapped IPv6 and equivalent IPv6 spellings share a throttle bucket. Each client gets ten login attempts per fifteen minutes, with bounded asynchronous password verification.
+Set `ADMIN_TRUSTED_PROXIES` to the proxy's actual peer address as seen by the admin container. Docker NAT can make a host proxy appear as the bridge gateway rather than 127.0.0.1. A fixed container proxy address could use `172.30.0.2/32`; use the narrowest appropriate range.
 
-If the proxy is on another machine, use the Docker host's private IP instead. Restrict incoming panel-port access to the proxy. The game uses UDP and does not go through this HTTP proxy. Forward **both game and beacon UDP ports**, keeping each external and internal port number identical. On the same LAN, direct-connect to the server's LAN address if the router does not support NAT loopback.
+The example overwrites client-supplied forwarding headers. In a controlled proxy chain, every proxy must append its actual peer. The panel walks `X-Forwarded-For` right to left to the first untrusted address, ignores forwarding from untrusted peers, and rejects malformed forwarding from trusted peers. Equivalent IPv6 spellings and IPv4-mapped IPv6 share a throttle bucket. HTTPS cookie behavior is derived from `ADMIN_ORIGINS`, not arbitrary forwarded headers.
 
-The admin service has Docker socket access. Even though its HTTP API restricts controls to this project's `game` service and checks its Compose labels, the socket grants host-level Docker authority to the admin container. Treat it as a trusted management service. No arbitrary shell/exec endpoint is exposed.
+### Management access
 
-## Steam patching and restart protection
+The panel has a single shared password and no per-user roles. Sessions last eight hours, use HttpOnly/SameSite=Strict cookies, and are held in memory; restarting/recreating the admin container signs everyone out. Login allows ten attempts per client per fifteen minutes, with at most four concurrent password checks.
 
-SteamCMD installs app 4019830 and writes `server-files/steamapps/appmanifest_4019830.acf`. The panel only recognizes an installed build when the manifest reports a fully installed state. New installs, incomplete downloads and legacy DepotDownloader-only installations show **Unknown / not installed** until a successful SteamCMD validation.
+The admin process runs as the image's non-root `node` user with a read-only root filesystem, dropped capabilities, and no-new-privileges. **Its Docker socket access still grants host-level Docker authority.** Treat the panel as a trusted management service. The application restricts controls to the configured Compose `game` service and exposes no arbitrary shell/exec endpoint.
 
-The admin service independently queries Valve SteamCMD for the current public build every five minutes. Steam failures are visible and never trigger a restart. A deliberately stopped or crashed game container stays stopped. `UPDATE_ON_START=false` also prevents automatic patching. Set `AUTO_UPDATE=false` to show versions without automatic updates.
+## Using the admin panel
 
-The game service intentionally has `restart: "no"`: Docker's own crash-loop policy must not bypass the two-hour guard. If an update or game startup fails, inspect logs and use the UI's manual Start/Restart after fixing the cause. Start the deployment after a host reboot using `docker compose up -d`. The admin service itself uses `unless-stopped`.
+- **Status and resources:** the browser polls every five seconds. CPU uses Docker's multicore percentage convention and may exceed 100%; memory excludes inactive file cache. Stopped containers report zero usage. Resource limits are not imposed by this Compose file.
+- **Start / Stop / Restart:** confirm the requested action. Stop/restart disconnect players. Only one control action runs at a time. Docker accepting an action does not mean the game is ready.
+- **Logs:** the latest 200 timestamped stdout/stderr lines, refreshed by polling. Search filters that snapshot locally. Export downloads the entire latest snapshot, including lines hidden by the search filter; it is not a full historical log download.
+- **Redaction:** the panel replaces nonempty container environment values whose names contain `PASSWORD`, `SECRET`, `TOKEN`, or `OWNER_ID`. This does not guarantee that arbitrary game-generated identifiers are removed. Direct Docker/file logs do not use this redaction.
+- **Check Steam now:** starts a metadata refresh with no direct restart. Concurrent requests return a conflict; manual checks are limited to one per minute. Background auto-patching remains independent.
+- **Maintenance window:** save `anytime` or a UTC interval. **Use environment** removes the persistent panel override. Saving a window does not restart the game.
 
-The optional `AUTO_UPDATE_UTC_HOUR=0..23` adds a daily maintenance restart; default `off`. It shares the same automatic cooldown and also skips stopped servers. Cooldown state is recorded **before** issuing a restart. Keep the `admin-state` volume: deleting it resets restart history. Do not run multiple admin replicas. Manual restarts do not affect this timestamp.
+Startup progress distinguishes backup, download/verification, configuration, starting, locally healthy running, stopped, and failure. Records are written atomically to `server-files/.dragonwilds-startup.json` and compared with the container's start time so stale records do not describe a new run. Detailed Steam output remains in logs; no invented download percentage is displayed.
 
-### Maintenance windows and manual checks
+## Updates and restart protection
 
-`AUTO_UPDATE_WINDOW_UTC=anytime` preserves automatic patching at any hour. Set a daily UTC interval such as `04:00-06:00` or `23:30-01:15` to restrict **all automatic restarts**, including the optional daily restart. Start time is inclusive and end time exclusive; equal endpoints are invalid. UTC does not change with daylight saving time. Choose `AUTO_UPDATE_UTC_HOUR` inside the window if using the optional daily restart.
+### Startup sequence
 
-The panel lets you edit/save this window. A saved panel value persists in `admin-state` and overrides the environment default; **Use environment** removes that override. Window changes do not restart the game. Pending patches are reconsidered on the next five-minute Steam check. Closing a window does not interrupt an update already in progress. Deliberately stopped servers remain stopped. The two-hour automatic cooldown still applies; manual Start/Restart bypass both the window and cooldown without changing automatic restart history.
+1. Validate environment and architecture.
+2. Prepare the configured UID/GID and repair ownership of installation and backup files.
+3. If `UPDATE_ON_START=true`, back up the existing `RSDragonwilds/Saved` tree, then run anonymous SteamCMD `app_update 4019830 validate`.
+4. Retry installation up to three times, ten seconds apart. A failed update stops startup.
+5. Create or merge configuration, then launch the Linux shipping executable with explicit game port, beacon port, and maximum players.
 
-**Check Steam now** performs an authenticated, non-restarting metadata refresh. Only one Steam query runs at once, and manual requests are limited to one per minute. Normal background auto-patching remains enabled independently when `AUTO_UPDATE=true`.
+The game runs as the `steam` account after initial ownership setup. Tini forwards signals; stop/restart allows 120 seconds before Docker may force termination.
 
-The progress panel shows backup, Steam download/verification, configuration, startup, locally healthy running state, or failure. Startup stages are atomically persisted in `server-files/.dragonwilds-startup.json`, survive panel restarts, and are matched to the current container start to exclude stale records. Stage reporting does not invent a download percentage; Steam's detailed output remains in the log. Local process/UDP health does not prove a player can join. Automatic patching skips an active startup/update.
+### Build detection and automatic restarts
 
-Container/base-OS patches are separate from game patches: run `bash scripts/deploy.sh` to rebuild reviewed local source with fresh base images and package indexes. It never automatically pulls unreviewed GitHub commits. Host kernel/Docker updates are managed by your Linux host.
+The installed build comes from `steamapps/appmanifest_4019830.acf` only when its app ID matches and `StateFlags=4` confirms full installation. New, incomplete, and legacy DepotDownloader-only installations display **Unknown / not installed** until SteamCMD validation creates a valid manifest.
 
-## Configuration and world data
+The admin service queries Valve independently on startup and every five minutes. A strictly newer public build can trigger a restart when:
 
-- `server-files/` persists installation, INI, worlds and Steam manifest.
-- `backups/` contains compressed copies of the full `RSDragonwilds/Saved` tree, taken before startup updates while the game is stopped. Default retention: last seven successful archives (`BACKUP_KEEP`). Backups include game settings/passwords: protect this folder.
-- `GENERATE_SETTINGS=true` updates only container-managed INI keys and preserves the server GUID, repeated KnownPlayerList entries (including bans/admins), unknown keys and sections.
-- `GENERATE_SETTINGS=false` keeps an existing INI byte-for-byte. First startup still creates a config. Direct `docker run` also accepts PR #7's `REGENERATE_SERVER_INI_ON_RESTART=false` alias.
-- Keep `.env` comments on their own lines. Use single quotes for passwords containing literal `$` or `#` so Compose does not interpolate them. Multiline/quoted INI values and filename-unsafe world names are rejected before downloading.
-- `DEFAULT_WORLD_NAME` names a newly created world and is used in the Worlds browser. Changing it does not rename or replace existing saves. `SERVER_NAME` is the server's separate display name.
+- `AUTO_UPDATE=true` and `UPDATE_ON_START=true`.
+- The game is running, no control action is busy, and no active backup/download/configuration or health-starting state blocks it.
+- The effective UTC window is open.
+- At least two hours have elapsed since the previous automatic restart attempt.
 
-To restore: stop the game (`docker compose stop game`), preserve the current Saved directory separately, inspect your chosen trusted archive, extract its `Saved/` directory into `server-files/RSDragonwilds/`, then `docker compose start game`. Never extract untrusted archives or overwrite a live world. Keep an off-host copy of backups. A crash/forced kill can only preserve the game's last completed save.
+Steam metadata errors are displayed and suppress that check's newer-build restart. They do not disable the independently configured daily schedule. Stopped or crashed game containers are not automatically started.
 
-## Game commands and possible additions
+The cooldown timestamp is persisted **before** issuing the restart. Failed attempts count; inability to persist the timestamp prevents the automatic restart. Manual Start/Restart bypass the window and cooldown and neither consume nor reset automatic restart history. Keep the `admin-state` volume and run only one admin replica.
 
-| Feature | Status |
+### Windows and daily maintenance
+
+`AUTO_UPDATE_WINDOW_UTC=04:00-06:00` allows automatic restarts from 04:00 inclusive to 06:00 exclusive. `23:30-01:15` crosses midnight. Equal endpoints are invalid; use `anytime` for all day. UTC does not shift with daylight saving time.
+
+A panel-saved window overrides the environment until **Use environment** clears it. Opening a window does not immediately trigger a Steam check; pending patches are reconsidered on the next five-minute check. Closing a window does not interrupt work already started.
+
+`AUTO_UPDATE_UTC_HOUR` is checked every 30 seconds during the configured hour. It shares the window and two-hour guard and is considered at most once per UTC day after its initial eligibility checks. A stopped server or cooldown can cause that day's attempt to be skipped; it is not a guaranteed restart or a queued catch-up job. Choose an hour that overlaps the window.
+
+Automatic restart safety is based on process/startup state, not player presence: the project has no verified live player roster or broadcast countdown.
+
+### Game, image, and host updates
+
+- **Game:** installed by SteamCMD at startup when enabled.
+- **Container/base OS:** rebuild reviewed local source with `bash scripts/deploy.sh`, or pull selected published images and recreate containers.
+- **Host kernel/Docker:** maintained separately on the Linux host.
+
+The game deliberately has `restart: "no"` so Docker cannot bypass the automatic restart guard. Following a host reboot or game crash, explicitly start it with `docker compose up -d` or the panel after investigating failures. The admin service uses `unless-stopped`.
+
+## Data, configuration, and backups
+
+### Persistent paths
+
+Paths below assume default host directories:
+
+| Host path / volume | Container path | Contents |
+| --- | --- | --- |
+| `server-files/` | Game: `/home/steam/server-files`; admin: `/game-data` (read-only) | Installed game, manifest, saves, INI, game logs, startup record. |
+| `backups/` | Game: `/backups` | `saved-<UTC timestamp>.tar.gz` archives. |
+| `<project>_admin-state` named volume | Admin: `/data` | `maintenance.json` policy/restart history and the admin's SteamCMD working files/cache. |
+
+The wrapper manages `server-files/RSDragonwilds/Saved/Config/LinuxServer/DedicatedServer.ini`. Under `[/Script/Dominion.DedicatedServerSettings]` it updates only `AdminPassword`, `OwnerId`, `WorldPassword`, `ServerName`, and `DefaultWorldName`. It preserves the server GUID, repeated KnownPlayerList entries (including moderation data), unknown keys, and other sections.
+
+To manage the INI manually, stop the game, set `GENERATE_SETTINGS=false`, edit the existing file, and recreate the game service to apply the environment change. Live INI edits can be overwritten by the game. Generated INI files and completed backup archives use mode 0600.
+
+### Backup behavior
+
+Every startup with `UPDATE_ON_START=true` attempts an offline backup before Steam validation, even if no newer build exists. First installation has nothing to back up. With startup updates disabled, no automatic startup backup is created.
+
+Archives contain the entire `Saved/` tree, including worlds, configuration, and logs, **not** the installation or the admin-state volume. A temporary `.partial` file becomes a completed archive only after success; retention removes older `saved-*.tar.gz` files after the new archive succeeds. Backup failures stop startup.
+
+Backups contain game settings/passwords. Protect them and keep a separate off-host copy. This is not a periodic backup service; a crash can preserve only the game's last completed save. Back up `.env` and the admin-state volume separately when planning a full host recovery.
+
+### Restore a backup
+
+1. Stop the game: `docker compose stop game`. Ensure no other process is using its data.
+2. Copy the current `RSDragonwilds/Saved` directory to a separate recovery location.
+3. Inspect a trusted archive before extracting; it should contain a top-level `Saved/` directory.
+4. Move the current `Saved` directory aside, then extract the archive into `server-files/RSDragonwilds/`. This avoids mixing restored and newer world files.
+5. Check `.env`: startup can reapply managed INI fields and update the game. For exact INI preservation set `GENERATE_SETTINGS=false`; to avoid a Steam update set `UPDATE_ON_START=false` only when the installed game is usable.
+6. Run `docker compose up -d game` to apply settings and start. Inspect logs/health, then verify the world with an actual game client.
+
+Adjust paths for `SERVER_DATA_PATH` and `BACKUP_PATH`. Never extract an untrusted archive or overwrite a live world. A backup of saves alone is not a rollback of the installed Steam build.
+
+### Import an existing world
+
+Stop the server and back up its current saves, then place the chosen world `.sav` in the server's actual save directory, moving competing saves aside first. Match filesystem casing on Linux. Restart and confirm the loaded world in the logs/client. Creating a new `DEFAULT_WORLD_NAME` does not replace existing worlds. Follow the [vendor's world-management guide](https://dragonwilds.runescape.com/news/how-to-dedicated-servers) for game-specific import steps; no web import/restore workflow is implemented.
+
+## Operations
+
+Run from the project directory using the intended environment file:
+
+| Command | Purpose |
 | --- | --- |
-| Start, stop, restart, logs, resource monitoring | Implemented via Docker. |
-| Steam versions, manual check, patch detection, startup progress, UTC maintenance windows, automatic restart protection | Implemented and regression-tested. |
-| Backup before update / preservation of moderation state | Implemented. |
-| Ban/unban and admin privileges | Supported through the game's own Server Management screen; not exposed as an unverified web command. |
-| Web chat / broadcast announcements / arbitrary admin commands | No supported remote chat/RCON/API verified in the reviewed official sources. Needs a documented game transport before adding working controls. |
-| Live online-player list / kick / save-now | No authoritative remote API verified. Log-derived counts would be estimates and are not used to decide restart safety. |
-| Always simulate while empty | Upstream issue #9 appears to be game behavior. No supported no-pause option verified. |
-| Backup browser, stopped-server world import/restore, notifications | Feasible additions with their own validation and tests. Not represented as implemented. |
+| `docker compose config --quiet` | Validate Compose interpolation without printing secrets. |
+| `docker compose ps` | Inspect container and health state. |
+| `docker compose logs -f --tail=200 game` | Follow raw game/Steam output; may contain sensitive values. |
+| `docker compose logs --tail=100 admin` | Investigate login, proxy, Docker, or update-controller errors. |
+| `docker compose stop game` | Gracefully stop the game while keeping the panel available. |
+| `docker compose start game` | Start an existing game container with its existing environment. |
+| `docker compose restart game` | Manual restart; can install patches and bypasses panel automatic limits. |
+| `docker compose up -d` | Create/recreate affected services, apply `.env` changes, and start stopped services. |
+| `docker compose down` | Remove containers/network while retaining bind-mounted data and the named state volume. |
+| `bash scripts/deploy.sh` | Rebuild both images from reviewed source with refreshed base images/packages and wait for readiness. |
 
-See [GAME-CAPABILITIES.md](GAME-CAPABILITIES.md) for the actual running-build command probes and their limits.
+Use `docker compose --env-file <file> ...` consistently for nondefault deployments. Avoid `down --volumes` for production: it deletes persisted admin policy/restart history. Do not reuse production save paths for tests.
 
-Official references: [Jagex dedicated-server guide](https://dragonwilds.runescape.com/news/how-to-dedicated-servers), [official container documentation](https://github.com/runescape/rsdw-dedicated), [Valve SteamCMD](https://developer.valvesoftware.com/wiki/SteamCMD). The guide documents in-game moderation and warns that live INI edits are overwritten; this implementation therefore does not edit a running game's settings.
+## Admin HTTP API
 
-## GitHub automation
+The panel is a same-origin HTTP application, not a general CORS service. Requests must use an allowed `Host`; the public `GET /healthz` route is the exception. Every API route except login requires the `dw_session` cookie.
 
-See [CI.md](CI.md) for quality gates, CodeQL, scheduled vulnerability audits, Dependabot, release archives and GHCR publication of both images. GHCR builds include SBOM/provenance; manual runs default to a non-publishing dry run.
+For non-GET requests, supply `X-Requested-With: DragonwildsAdmin`. If `Origin` is present, it must exactly match an allowed origin. Send JSON with `Content-Type: application/json` for requests with bodies. Login requires that content type; parsed request bodies are capped at 4096 characters.
 
-## Tests
+| Method | Path | Request / response |
+| --- | --- | --- |
+| GET | `/healthz` | Public `{"ok":true}`; only proves the HTTP service responds. |
+| POST | `/api/login` | `{"password":"..."}`; sets an eight-hour session cookie on success. |
+| POST | `/api/logout` | Removes the current session and expires its cookie. |
+| GET | `/api/status` | State/health/start time, exit/OOM details, latest action, versions, startup progress, maintenance source/window, cooldown, and check eligibility. |
+| GET | `/api/resources` | `cpuPercent`, `memoryBytes`, `memoryLimitBytes`. |
+| GET | `/api/logs` | `{"logs":"..."}`, latest 200 lines with panel redaction. |
+| POST | `/api/start` | Start request; returns 202 when queued. |
+| POST | `/api/stop` | Stop request; returns 202 when queued. |
+| POST | `/api/restart` | Restart request; returns 202 when queued. |
+| POST | `/api/check-steam` | Non-restarting metadata check; returns 202 when started. |
+| POST | `/api/maintenance` | `{"window":"04:00-06:00"}`, `{"window":"anytime"}`, or `{"window":null}` to reset; returns effective window status. |
 
-No npm or Python third-party packages are required for the tests.
+Poll status after a 202 response to observe completion/failure. Expected errors include 400 for malformed JSON/window input, 401 for authentication, 403 for host/origin rejection, 409 for an in-progress operation, 415 for non-JSON login, and 429 for throttling. Manual Steam-check throttling includes `Retry-After`. Docker/upstream request failures can return 502; inspect admin logs.
+
+## Troubleshooting
+
+| Symptom | Checks / resolution |
+| --- | --- |
+| Compose says a required variable is missing | Copy and edit `.env.example`; confirm the intended `--env-file`, real owner ID, and both admin passwords. |
+| Configuration error before download | Check ID format, lowercase booleans, world-name restrictions, numeric ranges, and beacon = game port + 1111. |
+| Panel returns `Unrecognized host` or origin rejection | Match the exact browser scheme/host/port in `ADMIN_ORIGINS`, preserve Host through the proxy, and recreate the admin service. |
+| Login succeeds but the session does not work | HTTPS-only origins enable Secure cookies; use HTTPS. Admin restarts expire all sessions. |
+| All users share a login lockout behind a proxy | Configure the actual narrow proxy peer/CIDR and correct forwarding headers. Wait for the fifteen-minute attempt window to expire. |
+| Panel shows Docker errors or unavailable status | Check `DOCKER_GID`, socket permissions/API compatibility, container name, and matching Compose project/service labels. Read admin logs. |
+| Installed build is unknown | Confirm a fully installed Steam manifest; start with `UPDATE_ON_START=true` to validate. Do not fabricate/edit build IDs. |
+| Steam metadata unavailable | Check outbound network/DNS and admin logs. Newer-build restarts pause until a successful check; a configured daily schedule remains separate. |
+| Patch is available but no restart occurs | Check both update switches, window override, two-hour cooldown, running/health/startup state, and last action. Automatic scheduling never starts a stopped game. |
+| Automatic restart occurs despite `AUTO_UPDATE=false` | Also set `AUTO_UPDATE_UTC_HOUR=off` to disable the independent daily restart. |
+| Deployment times out during first installation | Follow game logs; the 20-minute CLI wait is not a download cancellation. Do not start another process on the same files. |
+| Game stays stopped after a crash/reboot | Expected under `restart: "no"`. Fix the cause, then start manually. Check OOM status and available memory/disk. |
+| Healthy server is not joinable | Verify a real owner ID, client/server versions, world search name, and reachability of both UDP ports across every firewall/router. Local health is not a join test. |
+| Custom port works incompletely | Set both ports with the required 1111 offset and identical external/internal mappings. |
+| Settings or world name appear unchanged | Recreate containers after `.env` edits; check `GENERATE_SETTINGS` and existing saves. Existing world names are not renamed by the default-world setting. |
+| Permission denied or slow ownership setup | Check numeric UID/GID and writable data/backup mounts. Startup traverses existing files to repair ownership. |
+| Logs are incomplete in the panel | Panel logs cover the latest 200 lines only. Inspect raw Docker logs or saved game logs for older output; review before sharing. |
+
+The game health check requires the shipping process plus both expected bound UDP ports. It runs every 30 seconds with a 15-minute startup grace, a five-second timeout, and three retries. It does not validate external routing, authentication, or multiplayer. The admin health endpoint does not test the Docker socket or Steam.
+
+## Architecture and repository layout
+
+Two services share the game-data directory: the game can write it; the panel mounts it read-only. The panel uses the Docker socket for lifecycle/log/resource access and its own SteamCMD copy for public build metadata. The game installs and launches its own payload.
+
+```text
+.
+├── Dockerfile                 Game image, tools, entrypoint, health check
+├── docker-compose.yml         Production services, ports, mounts, security
+├── docker-compose.ghcr.yml    Standalone deployment from published images
+├── docker-compose.ci.yml      Named-volume fixture override
+├── .env.example               Deployment configuration template
+├── scripts/
+│   ├── init.sh / start.sh     Validation, ownership, backup/update, launch
+│   ├── functions.sh           Retried SteamCMD install/validation
+│   ├── config.py              Environment validation and INI merge
+│   ├── backup.py              Offline archive creation and retention
+│   ├── progress.py            Atomic startup progress records
+│   ├── healthcheck.py         Local process/UDP health
+│   ├── deploy.sh              Source build and deployment
+│   ├── ci-checks.sh           Syntax checks and unit tests
+│   ├── ci-scan-images.sh      Container vulnerability gate
+│   └── package.sh             HEAD source ZIP and SHA256SUMS
+├── admin/
+│   ├── Dockerfile            Node 24 runtime with SteamCMD
+│   ├── server.mjs             HTTP auth/API and Docker/update controller
+│   ├── steam.mjs              Steam metadata and installed-build parsing
+│   ├── maintenance.mjs        UTC windows and startup-state interpretation
+│   ├── proxy.mjs              Trusted-proxy/client-address handling
+│   └── public/                Dependency-free browser UI and artwork
+├── tests/                    Unit tests and isolated Docker fixture
+└── .github/                  Verify, security, release, GHCR, Dependabot
+```
+
+There is no npm application dependency install or frontend build step. Both services use Docker JSON-file log rotation at 10 MB × three files; this does not rotate separate game-written files in `Saved`.
+
+## Development and verification
+
+### Static checks and unit tests
+
+On Linux with Node 24 and Python 3.11+:
+
+```bash
+bash scripts/ci-checks.sh
+shellcheck -x -P SCRIPTDIR scripts/*.sh
+docker run --rm -v "$PWD:/repo:ro" -w /repo rhysd/actionlint:1.7.12
+```
+
+Individual suites require no third-party npm or Python packages:
 
 ```bash
 python3 -m unittest discover -s tests -p 'test_*.py' -v
 node --test tests/*.test.mjs
-shellcheck -x -P SCRIPTDIR scripts/*.sh
+```
+
+### Docker integration fixture
+
+Run against the isolated fixture, never production save paths:
+
+```bash
 python3 tests/prepare_fixture.py
 docker compose --env-file .env.test.local build --pull
 docker compose --env-file .env.test.local up -d --wait --wait-timeout 150
 python3 tests/integration.py
+bash scripts/ci-scan-images.sh
+docker compose --env-file .env.test.local down
 ```
 
-The fixture binds UDP and handles shutdown but **is not the game**. It is clearly labeled in its logs. Integration tests use only the `dragonwilds-test` project and test start/stop/restart against real Docker, persistence, authentication, resource data, and graceful shutdown. The test panel runs at `http://localhost:18089`; its generated password is in `.env.test.local`. Keep test and production environment files separate.
+The fixture uses project `dragonwilds-test`, panel `http://localhost:18089`, game/beacon host-loopback ports 17777/18888, and data under `test-results/`. Its generated panel password is in ignored `.env.test.local`. The preparation script preserves an existing environment file; review stale settings before reuse. The fixture binds UDP and handles shutdown but **is not the game**, as its logs state.
 
-See [UPSTREAM-REVIEW.md](UPSTREAM-REVIEW.md) for every upstream issue/PR disposition and [TEST-RESULTS.md](TEST-RESULTS.md) for the actual local verification and limitations. CI builds both images and runs the same isolated integration suite.
+Integration exercises authentication, redacted logs, real Docker start/stop/restart, graceful shutdown, identity/moderation persistence, resource data, and logout. CI uses the [named-volume override](docker-compose.ci.yml) and explicitly seeds the fixture; see the [Verify workflow](.github/workflows/verify.yml) for those steps and the [scanner script](scripts/ci-scan-images.sh) for the vulnerability gate.
+
+### Verification evidence and limits
+
+Recorded local verification on September 22–23, 2026: the final Verify run passed **49 unit tests (41 Node, 8 Python)**, linting, both image builds, eight Docker integration checkpoints, and both Trivy gates. Those runs also covered real-game Steam validation of build **25387240**, local process/UDP health, graceful restart, save backup, and browser checks.
+
+These are dated results, not a claim that every check ran for every documentation edit or that this build is still the latest. Earlier CodeQL results predate the final maintenance changes. Real player joins, ownership/moderation, external NAT, production TLS, and hosted GitHub publication remain outside that recorded verification.
+
+For contributions, keep documentation aligned with the scripts and defaults, add focused regression coverage for behavior changes, and run relevant checks above. Never commit `.env`, local test environments, secrets, saves, backups, or raw sensitive logs; the repository ignores these paths.
+
+## GitHub automation and releases
+
+| Workflow | Purpose |
+| --- | --- |
+| Verify | Push/PR/manual/reusable checks: Actionlint, ShellCheck, syntax/unit tests, both image builds, isolated lifecycle integration, vulnerability scans. |
+| GHCR images | After Verify, build game/admin images with SBOM and provenance for main/tag/manual runs. Manual runs default to a non-publishing dry run. |
+| CodeQL | JavaScript, Python, and GitHub Actions analysis on PR/main, weekly, or manually. |
+| Scheduled container audit | Weekly/manual rebuild and vulnerability checks against refreshed advisory data. |
+| Release deployment archive | After Verify, package tracked source and checksums; attach to a published release. |
+| Dependabot | Weekly proposals for GitHub Actions and Docker base images; no automatic merging. |
+
+The vulnerability gate rejects fixable HIGH/CRITICAL findings and scanner errors; it does not claim zero vulnerabilities or scan a proprietary game payload downloaded later. No workflow deploys or restarts your game server.
+
+Published packages use `ghcr.io/arumes31/runescape-dragonwilds-server` and `ghcr.io/arumes31/runescape-dragonwilds-server-admin`. Main produces `dev` and full-commit SHA tags; stable version tags also produce version aliases and `latest`. Prereleases do not move `latest`. Repository/package access, branch rules, and hosted security permissions must be configured separately. The [.github/workflows](.github/workflows) definitions contain the exact workflow behavior.
+
+To create a local deployment archive:
+
+```bash
+bash scripts/package.sh
+```
+
+This writes `dist/dragonwilds-deployment.zip` and `dist/SHA256SUMS` from **committed HEAD**, excluding uncommitted work. Release archives contain source, not saves, secrets, prebuilt images, or the Steam payload. When rolling back container images, preserve backups and remember that startup Steam validation can still install the newest game; save-format compatibility is a separate concern.
 
 ## Artwork and licensing
 
-The repository's original GPL-3.0 license and upstream attribution are retained. The landscape is newly generated fan-inspired artwork; the rune icon is an original SVG. Neither is an official Jagex asset or endorsement. RuneScape and Dragonwilds remain their respective owners' trademarks.
+The original [GPL-3.0 license](LICENSE) and upstream attribution are retained. The landscape is newly generated fan-inspired artwork; the rune icon is an original SVG. Neither is an official Jagex asset or endorsement. RuneScape and Dragonwilds remain their respective owners' trademarks.
+
+Game-specific references: [Jagex dedicated-server guide](https://dragonwilds.runescape.com/news/how-to-dedicated-servers), [official dedicated-server repository](https://github.com/runescape/rsdw-dedicated), and [Valve SteamCMD documentation](https://developer.valvesoftware.com/wiki/SteamCMD).

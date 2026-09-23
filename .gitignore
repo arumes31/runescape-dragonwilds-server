@@ -1,10 +1,36 @@
+# Local environment and credentials
 .env
-.env.*.local
+.env.*
+!.env.example
 secrets/
+
+# Installed game, worlds, and backups
 server-files/
 backups/
+
+# Generated test reports and release artifacts
 test-results/
-__pycache__/
-*.pyc
-docs/plans/
+tests-results/
 dist/
+*.log
+
+# Python bytecode and local virtual environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local deployment notes and verification reports (keep README.md tracked)
+/CI.md
+/GAME-CAPABILITIES.md
+/TEST-RESULTS.md
+/UPSTREAM-REVIEW.md
+/docs/plans/
+
+# OS and editor temporary files
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+*~
