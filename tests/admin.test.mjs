@@ -125,3 +125,23 @@ test('incorrect passwords are rate limited', async t => {
   for (let i = 0; i < 10; i++) assert.equal((await f.request('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'DragonwildsAdmin' }, body: JSON.stringify({ password: 'wrong' }) })).status, 401);
   assert.equal((await f.request('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'DragonwildsAdmin' }, body: JSON.stringify({ password }) })).status, 429);
 });
+
+test('new settings and Steam endpoints require authentication and valid origin', async t => {
+  const f = await fixture(t, { autoUpdate: false, versionProvider: async () => '200', installedProvider: () => '100' });
+  for (const path of ['/api/check-steam', '/api/maintenance']) {
+    assert.equal((await f.request(path, { method: 'POST' })).status, 401);
+  }
+  const headers = { ...await f.login(), 'Content-Type': 'application/json' };
+  for (const path of ['/api/check-steam', '/api/maintenance']) {
+    assert.equal((await f.request(path, { method: 'POST', headers: { ...headers, Origin: 'https://evil.example' }, body: '{}' })).status, 403);
+  }
+  assert.equal((await f.request('/api/maintenance', { method: 'POST', headers, body: JSON.stringify({ window: '23:00-02:00' }) })).status, 200);
+  assert.equal((await f.controller.status()).maintenance.window, '23:00-02:00');
+  assert.equal((await f.request('/api/maintenance', { method: 'POST', headers, body: JSON.stringify({ window: 'invalid' }) })).status, 400);
+  assert.equal((await f.controller.status()).maintenance.window, '23:00-02:00');
+  assert.equal((await f.request('/api/check-steam', { method: 'POST', headers })).status, 202);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.controller.versions.latestBuild, '200');
+  assert.ok(!f.calls.some(([method]) => method === 'POST'));
+  assert.equal((await f.request('/api/check-steam', { method: 'POST', headers })).status, 429);
+});

@@ -3,3 +3,14 @@
 .resource-bar{display:flex;gap:28px;flex-wrap:wrap;padding:0 0 25px;color:var(--muted);font-size:11px}.resource-bar strong{color:var(--text);margin-left:10px;font-weight:500}.resource-bar>span:last-child{margin-left:auto}.log-tools{display:flex;gap:10px;margin-bottom:12px}.log-tools input{font-size:12px}.log-tools button{white-space:nowrap}.capabilities{border-top:1px solid var(--line);padding-top:20px;margin-top:30px;font-size:13px}.capabilities summary{cursor:pointer;color:var(--muted)}.capabilities p{max-width:850px}.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}@media(max-width:560px){.resource-bar{gap:15px}.resource-bar>span:last-child{margin-left:0}.log-tools button{padding:10px;font-size:12px}}
 
 .login-screen main{max-width:none;background:linear-gradient(90deg,rgba(8,17,12,.7),rgba(8,17,12,.2) 65%),url('/assets/dragonwilds-realm.png') center/cover no-repeat;min-height:calc(100vh - 160px)}.login-screen .login{margin:4vh 0;max-width:440px}.login-screen .intro,.login-screen .hint{color:#d5ded2;text-shadow:0 1px 3px #000}.login-screen form{padding:25px;background:#111b16ed;border:1px solid #526344}.heading{background:linear-gradient(90deg,#101c15f5,#101c1580 65%,#101c1515),url('/assets/dragonwilds-realm.png') 65% 34%/cover;min-height:185px;padding:30px;border:1px solid #536446}.heading .quiet{background:#111b16dd;align-self:flex-start}.versions{display:grid;grid-template-columns:1fr 1fr 2fr;gap:25px;border-bottom:1px solid var(--line);padding:0 0 24px;margin-bottom:24px}.versions strong{font:19px Georgia,serif;color:var(--accent)}#version-check{font-size:12px;line-height:1.6;color:var(--muted);overflow-wrap:anywhere}.mark{background: url('/assets/rune.svg') center/34px no-repeat;font-size:0;border-color:#9ba566}.summary{margin-bottom:25px}@media(max-width:560px){.heading{padding:20px;min-height:175px}.login-screen main{background-position:65% center}.login-screen .login{margin:2vh auto}.versions{grid-template-columns:1fr 1fr;gap:22px}.versions>div:last-child{grid-column:1/-1}.login-screen form{padding:20px}.heading h1{font-size:31px}}
+
+.startup-progress{padding:1rem 1.25rem;border:1px solid var(--line,#475447);background:rgba(12,24,20,.85);margin-bottom:1rem}
+.startup-progress strong{display:block;font-size:1.15rem;margin:.4rem 0}
+.startup-progress p{margin:0;color:var(--muted,#bac3b7)}
+#check-steam{display:block;margin-top:.75rem}
+#window-form{margin:1.25rem 0}
+#window-form select{width:100%;padding:.7rem;background:#15221d;color:#f1ead9;border:1px solid #647365;font:inherit;margin:.5rem 0}
+.window-times{display:grid;grid-template-columns:1fr 1fr;gap:.75rem}
+.window-times[hidden]{display:none}
+.window-times input{width:100%;min-width:0;color-scheme:dark}
+#window-feedback{font-size:.85rem;min-height:1.3em}

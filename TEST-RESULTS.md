@@ -29,7 +29,7 @@ A real manual restart was triggered through the browser confirmation dialog. The
 
 ## Local panels
 
-- http://localhost:18090 : real-game deployment (game stopped after the smoke test; panel stays available); credentials/settings in the ignored .env.real.local.
+- http://localhost:18090 : real-game deployment (running after the 2026-09-23 administration/update tests); credentials/settings in the ignored .env.real.local.
 - http://localhost:18089 : isolated lifecycle fixture; credentials/settings in the ignored .env.test.local.
 
 Both test environments disable automatic updates. The production .env.example enables them by default. Use a real OWNER_ID and fresh passwords for Linux deployment; never reuse the synthetic test settings.
@@ -47,3 +47,15 @@ The exact pinned Docker metadata action was executed with simulated main/stable/
 CodeQL action v4.38.1 / CLI 2.27.0 completed locally for JavaScript, Python and GitHub Actions. The final SARIF reports contain **zero findings in all three languages**. Its initial Python finding identified an unnecessary all-interface bind in the synthetic fixture; that fixture now binds container loopback, and all eight Docker integration checks passed again. Real game and panel binding settings were not changed. Local CodeQL uses a synthetic analysis ID and upload=never; query execution is unchanged.
 
 Six additional act checks of the actual GHCR publish/export expressions passed (game/admin for push, manual publish=true and manual publish=false). These caught and corrected GitHub expression empty-string fallback behavior so publish runs do not accidentally request an OCI-only export. No GHCR credentials or publication were used in these tests.
+
+
+## Proxy, maintenance, progress and command verification (2026-09-23)
+
+- The reverse-proxy regression first reproduced shared client lockout, then passed with explicit proxy trust. Tests cover untrusted forwarding spoofing, chain traversal, malformed headers, IPv4-mapped IPv6, canonical IPv6 and CIDR bounds. Password hashing now uses bounded asynchronous work.
+- Maintenance regressions cover midnight wrapping, exclusive window ends, invalid intervals, persisted UI overrides and reset, automatic deferral without consuming cooldown, manual bypass, and delayed Steam/Docker responses that cross a window boundary. Existing two-hour/failure/manual-restart tests still pass.
+- Manual Steam check endpoint tests cover authentication, origin rejection, concurrency, request throttling and no direct restart. Startup tests cover atomic stage writes, stale records, active-download restart protection and failures.
+- Browser checks exercised Check Steam now against live Valve metadata, edited/saved 23:30-01:15 UTC, and confirmed it survived an admin-container restart. Mobile width 390 had no horizontal overflow. Expected unauthenticated HTTP 401 responses occurred during login/session reset; no JavaScript exceptions were observed.
+- Rebuilt both images and exercised the actual game with UPDATE_ON_START=true: pre-update backup, successful Steam validation of build 25387240, persistent startup record, then healthy process/UDP sockets and ReadyToJoin. Automatic restarts remain disabled in the local real-test environment; startup validation is enabled.
+- Actual game command probes and limitations are recorded in GAME-CAPABILITIES.md. No real account was available for player/moderation tests. The game and admin remain running on the isolated local deployment.
+
+- Final complete Verify workflow passed under local act: **49 unit tests (41 Node, 8 Python)**, ShellCheck, Actionlint, both image builds, all eight Docker integration checkpoints and both Trivy gates (no fixable HIGH/CRITICAL findings). This rerun used the final maintenance-boundary fix. Log: ignored `test-results/verify-admin-improvements.log`. Earlier CodeQL results above belong to the previous workflow-validation run; CodeQL was not rerun for this change.

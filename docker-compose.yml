@@ -43,6 +43,8 @@ services:
       GAME_CONTAINER: ${COMPOSE_PROJECT_NAME:-dragonwilds}-game
       COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-dragonwilds}
       ADMIN_ORIGINS: ${ADMIN_ORIGINS:-http://localhost:8080,http://127.0.0.1:8080}
+      ADMIN_TRUSTED_PROXIES: ${ADMIN_TRUSTED_PROXIES:-}
+      AUTO_UPDATE_WINDOW_UTC: ${AUTO_UPDATE_WINDOW_UTC:-anytime}
       AUTO_UPDATE_UTC_HOUR: ${AUTO_UPDATE_UTC_HOUR:-off}
       AUTO_UPDATE: ${AUTO_UPDATE:-true}
     group_add: ["${DOCKER_GID:-0}"]

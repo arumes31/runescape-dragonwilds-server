@@ -1,6 +1,8 @@
 const $ = id => document.getElementById(id);
 let signedIn = false, refreshing = false, pendingAction = null;
 let latestLogs = "";
+let windowDirty = false;
+const phaseLabels = { backing_up: 'Backing up saves', downloading: 'Downloading / verifying', configuring: 'Configuring', starting: 'Starting game', running: 'Running', failed: 'Failed', stopped: 'Stopped', stopping: 'Stopping game' };
 function message(text = '', error = false) { $('message').textContent = text; $('message').classList.toggle('error', error); }
 function showLogin() { document.body.classList.add('login-screen'); signedIn = false; $('login').hidden = false; $('dashboard').hidden = true; }
 async function api(path, method = 'GET', body) {
@@ -20,12 +22,22 @@ async function refresh() {
     $('health').textContent = status.health;
     $('started').textContent = date(status.startedAt);
     const cooldown = status.nextAutoRestartAllowedAt && new Date(status.nextAutoRestartAllowedAt) > new Date();
-    $('next-update').textContent = !status.autoUpdate ? 'Off' : cooldown ? `After ${date(status.nextAutoRestartAllowedAt)}` : 'Monitoring Steam';
+    $('next-update').textContent = !status.autoUpdate ? 'Off' : !status.maintenance.open ? `Window opens ${date(status.maintenance.nextOpenAt)}` : cooldown ? `After ${date(status.nextAutoRestartAllowedAt)}` : 'Monitoring Steam';
+    $('progress-stage').textContent = phaseLabels[status.progress.phase] ?? 'Unknown';
+    $('progress-detail').textContent = status.progress.message;
+    $('check-steam').disabled = status.checkingVersions || (status.nextManualCheckAt && new Date(status.nextManualCheckAt) > new Date());
+    $('check-steam').textContent = status.checkingVersions ? 'Checking Steam…' : 'Check Steam now';
+    $('window-status').textContent = `${status.maintenance.window === 'anytime' ? 'Any time' : status.maintenance.window + ' UTC'} · ${status.maintenance.open ? 'Window open' : 'Next opens ' + date(status.maintenance.nextOpenAt)} · ${status.maintenance.source === 'panel' ? 'Saved in panel' : 'Environment default'}`;
+    if (!windowDirty) {
+      $('window-mode').value = status.maintenance.window === 'anytime' ? 'anytime' : 'daily';
+      if (status.maintenance.window !== 'anytime') [$('window-start').value, $('window-end').value] = status.maintenance.window.split('-');
+      $('window-times').hidden = $('window-mode').value === 'anytime';
+    }
     $('installed-version').textContent = status.versions.installedBuild ?? 'Unknown / not installed';
     $('latest-version').textContent = status.versions.latestBuild ?? 'Unavailable';
-    $('version-check').textContent = status.versions.error ? status.versions.error : status.versions.checkedAt ? `${status.versions.updateAvailable ? 'Update available' : status.versions.installedBuild ? 'No newer build detected' : 'Installed build not confirmed'} · ${date(status.versions.checkedAt)}` : 'Contacting Steam…';
-    $('schedule-title').textContent = status.autoUpdate ? 'Update when a patch lands.' : 'Automatic updates off';
-    $('schedule-detail').textContent = !status.updatesOnStart ? 'Startup updates are disabled. Automatic patching will be skipped.' : status.autoUpdate ? 'Steam is checked every 5 minutes. A newer build triggers a graceful restart after the cooldown. Stopped servers stay stopped.' : 'Start or restart manually to install available game patches.';
+    $('version-check').textContent = status.checkingVersions ? 'Contacting Steam…' : status.versions.error ? status.versions.error : status.versions.checkedAt ? `${status.versions.updateAvailable ? 'Update available' : status.versions.installedBuild ? 'No newer build detected' : 'Installed build not confirmed'} · ${date(status.versions.checkedAt)}` : 'Contacting Steam…';
+    $('schedule-title').textContent = status.autoUpdate ? 'Keep patches on schedule.' : 'Automatic updates off';
+    $('schedule-detail').textContent = !status.updatesOnStart ? 'Startup updates are disabled. Automatic patching will be skipped.' : status.autoUpdate ? 'Steam is checked every 5 minutes. A newer build triggers a graceful restart inside the maintenance window after the cooldown. Stopped servers stay stopped.' : 'Start or restart manually to install available game patches.';
     $('last-action').textContent = status.lastAction ? `${date(status.lastAction.at)} · ${status.lastAction.source} · ${status.lastAction.message}` : 'No server actions recorded yet.';
     $('start').disabled = status.busy || status.running;
     $('stop').disabled = status.busy || !status.running;
@@ -80,3 +92,28 @@ $('download-log').addEventListener('click', () => {
   const link = document.createElement('a'); link.href = url; link.download = 'dragonwilds-server.log'; link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
+
+$('check-steam').addEventListener('click', async () => {
+  $('check-steam').disabled = true;
+  try { await api('check-steam', 'POST'); await refresh(); }
+  catch (error) { message(error.message, true); $('check-steam').disabled = false; }
+});
+$('window-form').addEventListener('input', () => {
+  windowDirty = true;
+  $('window-times').hidden = $('window-mode').value === 'anytime';
+  $('window-feedback').textContent = 'Unsaved changes';
+});
+async function saveWindow(value) {
+  $('save-window').disabled = true; $('reset-window').disabled = true;
+  try {
+    await api('maintenance', 'POST', { window: value });
+    windowDirty = false; $('window-feedback').textContent = value === null ? 'Environment default restored.' : 'Maintenance window saved.';
+    await refresh();
+  } catch (error) { $('window-feedback').textContent = error.message; }
+  finally { $('save-window').disabled = false; $('reset-window').disabled = false; }
+}
+$('window-form').addEventListener('submit', event => {
+  event.preventDefault();
+  void saveWindow($('window-mode').value === 'anytime' ? 'anytime' : `${$('window-start').value}-${$('window-end').value}`);
+});
+$('reset-window').addEventListener('click', () => { void saveWindow(null); });

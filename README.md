@@ -48,8 +48,13 @@ location / {
     proxy_pass http://127.0.0.1:8080;
     proxy_set_header Host $http_host;
     proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $remote_addr;
 }
 ```
+
+Set `ADMIN_TRUSTED_PROXIES` to the actual proxy peer IPs/CIDRs as seen by the admin container (comma-separated, for example `172.30.0.2/32` for a proxy with that fixed Docker IP). Docker NAT may make a host proxy appear as a bridge gateway; do not assume it appears as 127.0.0.1. Use the smallest appropriate range and restrict the panel port to your proxy. Empty means no forwarding headers are trusted. Universal `/0` trust is rejected.
+
+The example overwrites client-supplied forwarding headers. In a controlled chain of proxies, each proxy must append its actual peer; the panel walks `X-Forwarded-For` from right to left and stops at the first untrusted address. It ignores forwarding from untrusted peers and rejects malformed forwarding from trusted peers. IPv4-mapped IPv6 and equivalent IPv6 spellings share a throttle bucket. Each client gets ten login attempts per fifteen minutes, with bounded asynchronous password verification.
 
 If the proxy is on another machine, use the Docker host's private IP instead. Restrict incoming panel-port access to the proxy. The game uses UDP and does not go through this HTTP proxy. Forward **both game and beacon UDP ports**, keeping each external and internal port number identical. On the same LAN, direct-connect to the server's LAN address if the router does not support NAT loopback.
 
@@ -64,6 +69,16 @@ The admin service independently queries Valve SteamCMD for the current public bu
 The game service intentionally has `restart: "no"`: Docker's own crash-loop policy must not bypass the two-hour guard. If an update or game startup fails, inspect logs and use the UI's manual Start/Restart after fixing the cause. Start the deployment after a host reboot using `docker compose up -d`. The admin service itself uses `unless-stopped`.
 
 The optional `AUTO_UPDATE_UTC_HOUR=0..23` adds a daily maintenance restart; default `off`. It shares the same automatic cooldown and also skips stopped servers. Cooldown state is recorded **before** issuing a restart. Keep the `admin-state` volume: deleting it resets restart history. Do not run multiple admin replicas. Manual restarts do not affect this timestamp.
+
+### Maintenance windows and manual checks
+
+`AUTO_UPDATE_WINDOW_UTC=anytime` preserves automatic patching at any hour. Set a daily UTC interval such as `04:00-06:00` or `23:30-01:15` to restrict **all automatic restarts**, including the optional daily restart. Start time is inclusive and end time exclusive; equal endpoints are invalid. UTC does not change with daylight saving time. Choose `AUTO_UPDATE_UTC_HOUR` inside the window if using the optional daily restart.
+
+The panel lets you edit/save this window. A saved panel value persists in `admin-state` and overrides the environment default; **Use environment** removes that override. Window changes do not restart the game. Pending patches are reconsidered on the next five-minute Steam check. Closing a window does not interrupt an update already in progress. Deliberately stopped servers remain stopped. The two-hour automatic cooldown still applies; manual Start/Restart bypass both the window and cooldown without changing automatic restart history.
+
+**Check Steam now** performs an authenticated, non-restarting metadata refresh. Only one Steam query runs at once, and manual requests are limited to one per minute. Normal background auto-patching remains enabled independently when `AUTO_UPDATE=true`.
+
+The progress panel shows backup, Steam download/verification, configuration, startup, locally healthy running state, or failure. Startup stages are atomically persisted in `server-files/.dragonwilds-startup.json`, survive panel restarts, and are matched to the current container start to exclude stale records. Stage reporting does not invent a download percentage; Steam's detailed output remains in the log. Local process/UDP health does not prove a player can join. Automatic patching skips an active startup/update.
 
 Container/base-OS patches are separate from game patches: run `bash scripts/deploy.sh` to rebuild reviewed local source with fresh base images and package indexes. It never automatically pulls unreviewed GitHub commits. Host kernel/Docker updates are managed by your Linux host.
 
@@ -83,13 +98,15 @@ To restore: stop the game (`docker compose stop game`), preserve the current Sav
 | Feature | Status |
 | --- | --- |
 | Start, stop, restart, logs, resource monitoring | Implemented via Docker. |
-| Steam versions, patch detection, automatic restart protection | Implemented and regression-tested. |
+| Steam versions, manual check, patch detection, startup progress, UTC maintenance windows, automatic restart protection | Implemented and regression-tested. |
 | Backup before update / preservation of moderation state | Implemented. |
 | Ban/unban and admin privileges | Supported through the game's own Server Management screen; not exposed as an unverified web command. |
 | Web chat / broadcast announcements / arbitrary admin commands | No supported remote chat/RCON/API verified in the reviewed official sources. Needs a documented game transport before adding working controls. |
 | Live online-player list / kick / save-now | No authoritative remote API verified. Log-derived counts would be estimates and are not used to decide restart safety. |
 | Always simulate while empty | Upstream issue #9 appears to be game behavior. No supported no-pause option verified. |
 | Backup browser, stopped-server world import/restore, notifications | Feasible additions with their own validation and tests. Not represented as implemented. |
+
+See [GAME-CAPABILITIES.md](GAME-CAPABILITIES.md) for the actual running-build command probes and their limits.
 
 Official references: [Jagex dedicated-server guide](https://dragonwilds.runescape.com/news/how-to-dedicated-servers), [official container documentation](https://github.com/runescape/rsdw-dedicated), [Valve SteamCMD](https://developer.valvesoftware.com/wiki/SteamCMD). The guide documents in-game moderation and warns that live INI edits are overwritten; this implementation therefore does not edit a running game's settings.
 

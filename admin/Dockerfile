@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
 RUN rm -rf /usr/local/lib/node_modules/npm /opt/yarn-* && \
     rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/yarn /usr/local/bin/yarnpkg
 WORKDIR /app
-COPY server.mjs steam.mjs ./
+COPY *.mjs ./
 COPY public ./public
 RUN mkdir /data && chown node:node /data
 USER node
