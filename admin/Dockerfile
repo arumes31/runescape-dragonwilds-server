@@ -1,4 +1,4 @@
-FROM node:24-bookworm-slim
+FROM node:25-bookworm-slim
 ENV NODE_ENV=production
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates lib32gcc-s1 && \
     rm -rf /var/lib/apt/lists/* && mkdir -p /opt/steamcmd && \
