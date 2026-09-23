@@ -1,57 +1,64 @@
-# Standalone GHCR deployment: docker compose -f docker-compose.ghcr.yml --env-file .env up -d
-# Set GAME_IMAGE and ADMIN_IMAGE to published images under ghcr.io/arumes31/.
-name: ${COMPOSE_PROJECT_NAME:-dragonwilds}
+# Edit settings directly in this file. No .env file is required.
+# Keep the Compose project name aligned with admin.COMPOSE_PROJECT_NAME.
+# Deploy: docker compose -p dragonwilds -f docker-compose.ghcr.yml up -d
+name: dragonwilds
 services:
   game:
-    image: ${GAME_IMAGE:?Set GAME_IMAGE in .env to a published GHCR game image}
+    image: ghcr.io/arumes31/runescape-dragonwilds-server:latest
     platform: linux/amd64
-    container_name: ${COMPOSE_PROJECT_NAME:-dragonwilds}-game
-    # Fail stopped on game/update failure; Docker must not bypass the 2-hour update guard.
+    container_name: dragonwilds-game
+    # Automatic restart policy is managed by the admin service.
     restart: "no"
     stop_grace_period: 120s
     ports:
-      - "${GAME_BIND_IP:-0.0.0.0}:${DEFAULT_PORT:-7777}:${DEFAULT_PORT:-7777}/udp"
-      - "${GAME_BIND_IP:-0.0.0.0}:${BEACON_PORT:-8888}:${BEACON_PORT:-8888}/udp"
+      - "7777:7777/udp"
+      - "8888:8888/udp"
     environment:
-      PUID: ${PUID:-1000}
-      PGID: ${PGID:-1000}
-      OWNER_ID: ${OWNER_ID:?Set OWNER_ID in .env}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
-      WORLD_PASSWORD: ${WORLD_PASSWORD:-}
-      SERVER_NAME: ${SERVER_NAME:-DragonWildsServer}
-      DEFAULT_WORLD_NAME: ${DEFAULT_WORLD_NAME:-MyWorld}
-      DEFAULT_PORT: ${DEFAULT_PORT:-7777}
-      BEACON_PORT: ${BEACON_PORT:-8888}
-      MAX_PLAYERS: ${MAX_PLAYERS:-6}
-      MULTIHOME: ${MULTIHOME:-}
-      UPDATE_ON_START: ${UPDATE_ON_START:-true}
-      GENERATE_SETTINGS: ${GENERATE_SETTINGS:-true}
-      BACKUP_KEEP: ${BACKUP_KEEP:-7}
+      PUID: "1000"
+      PGID: "1000"
+      # Required: Player ID from in-game Settings (32 hexadecimal characters).
+      OWNER_ID: ""
+      # Required: in-game administration password.
+      ADMIN_PASSWORD: ""
+      WORLD_PASSWORD: ""
+      SERVER_NAME: "DragonWildsServer"
+      DEFAULT_WORLD_NAME: "MyWorld"
+      DEFAULT_PORT: "7777"
+      # Must equal DEFAULT_PORT + 1111; also update both port mappings above.
+      BEACON_PORT: "8888"
+      MAX_PLAYERS: "6"
+      MULTIHOME: ""
+      UPDATE_ON_START: "true"
+      GENERATE_SETTINGS: "true"
+      BACKUP_KEEP: "7"
     volumes:
-      - ${SERVER_DATA_PATH:-./server-files}:/home/steam/server-files
-      - ${BACKUP_PATH:-./backups}:/backups
+      - ./server-files:/home/steam/server-files
+      - ./backups:/backups
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
   admin:
-    image: ${ADMIN_IMAGE:?Set ADMIN_IMAGE in .env to a published GHCR admin image}
+    image: ghcr.io/arumes31/runescape-dragonwilds-server-admin:latest
     restart: unless-stopped
     ports:
-      - "${ADMIN_BIND_IP:-0.0.0.0}:${ADMIN_PORT:-8080}:8080"
+      - "8080:8080"
     environment:
-      ADMIN_GUI_PASSWORD: ${ADMIN_GUI_PASSWORD:?Set ADMIN_GUI_PASSWORD in .env (at least 20 characters)}
-      GAME_CONTAINER: ${COMPOSE_PROJECT_NAME:-dragonwilds}-game
-      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-dragonwilds}
-      ADMIN_ORIGINS: ${ADMIN_ORIGINS:-http://localhost:8080,http://127.0.0.1:8080}
-      ADMIN_TRUSTED_PROXIES: ${ADMIN_TRUSTED_PROXIES:-}
-      AUTO_UPDATE_WINDOW_UTC: ${AUTO_UPDATE_WINDOW_UTC:-anytime}
-      AUTO_UPDATE_UTC_HOUR: ${AUTO_UPDATE_UTC_HOUR:-off}
-      AUTO_UPDATE: ${AUTO_UPDATE:-true}
-    group_add: ["${DOCKER_GID:-0}"]
+      # Required: separate panel password with at least 20 characters.
+      ADMIN_GUI_PASSWORD: ""
+      GAME_CONTAINER: dragonwilds-game
+      COMPOSE_PROJECT_NAME: dragonwilds
+      # Set to your exact panel URL, with scheme and no trailing slash.
+      ADMIN_ORIGINS: "http://localhost:8080,http://127.0.0.1:8080"
+      ADMIN_TRUSTED_PROXIES: ""
+      AUTO_UPDATE_WINDOW_UTC: "anytime"
+      AUTO_UPDATE_UTC_HOUR: "off"
+      AUTO_UPDATE: "true"
+    # Replace 0 with the output of: stat -c '%g' /var/run/docker.sock
+    group_add: ["0"]
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - admin-state:/data
-      - ${SERVER_DATA_PATH:-./server-files}:/game-data:ro
+      - ./server-files:/game-data:ro
     read_only: true
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]

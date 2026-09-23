@@ -94,44 +94,47 @@ To find the world, use the game's **Worlds → Public** tab and search its exact
 
 ### GHCR Docker Compose example
 
-Use [docker-compose.ghcr.yml](docker-compose.ghcr.yml) for a standalone deployment from published images. It includes both services, all environment settings, UDP/panel ports, persistent storage, restart policies, log rotation, and admin security settings, with no local build definitions. Only this Compose file and a configured `.env` are needed on the host; data directories and the admin-state volume are created at startup.
+Use [docker-compose.ghcr.yml](docker-compose.ghcr.yml) for a standalone deployment from published images. **All settings are configured directly in this Compose file; no .env file is required.** It includes both services, UDP/panel ports, persistent storage, restart policies, log rotation, and admin security settings, with no local build definitions.
 
-Copy `.env.example` to `.env` and fill the required settings from the quick start. For images published from [arumes31/runescape-dragonwilds-server](https://github.com/arumes31/runescape-dragonwilds-server), also set:
-
-```dotenv
-GAME_IMAGE=ghcr.io/arumes31/runescape-dragonwilds-server:dev
-ADMIN_IMAGE=ghcr.io/arumes31/runescape-dragonwilds-server-admin:dev
-```
-
-The `dev` tags are published by successful main-branch GHCR workflow runs. Wait for publication before pulling them, or choose an available release tag. Use matching game/admin releases, preferably pinned by digest. The GHCR Compose file requires both image variables explicitly.
-
-The image selection in that file is:
+The images are:
 
 ```yaml
 services:
   game:
-    image: ${GAME_IMAGE:?Set GAME_IMAGE in .env to a published GHCR game image}
+    image: ghcr.io/arumes31/runescape-dragonwilds-server:latest
   admin:
-    image: ${ADMIN_IMAGE:?Set ADMIN_IMAGE in .env to a published GHCR admin image}
+    image: ghcr.io/arumes31/runescape-dragonwilds-server-admin:latest
 ```
 
-This snippet shows only image selection; deploy the complete linked file. Authenticate to GHCR first if the selected packages are private, then run:
+This snippet shows only image selection; deploy the complete linked file. Successful main-branch GHCR runs publish `latest`. Stable releases also update `latest`; prereleases do not. Wait for publication before pulling, or select an available release tag. Pin matching game/admin digests for reproducible deployments.
+
+Before starting, edit the full Compose file:
+
+- Fill `game.environment.OWNER_ID`, `game.environment.ADMIN_PASSWORD`, and `admin.environment.ADMIN_GUI_PASSWORD` (at least 20 characters). They are intentionally empty in the public example.
+- Set server/world names, world password, UID/GID, and update settings under `environment`.
+- Set `ADMIN_ORIGINS` to the exact panel URL and configure trusted proxies if needed.
+- Set `admin.group_add` to the Docker socket group ID from `stat -c '%g' /var/run/docker.sock`.
+- Adjust `ports` and host `volumes` directly. If changing the game port, update both game/beacon environment values and UDP mappings; beacon is game port + 1111.
+- Keep the selected Compose project name, `admin.environment.COMPOSE_PROJECT_NAME`, game container name, and `admin.environment.GAME_CONTAINER` aligned. The commands below explicitly use project `dragonwilds`.
+
+The configured file contains passwords; keep that deployment copy private. Authenticate to GHCR first if the selected packages require it, then:
 
 ```bash
-docker compose -f docker-compose.ghcr.yml --env-file .env config --quiet
-docker compose -f docker-compose.ghcr.yml --env-file .env pull
-docker compose -f docker-compose.ghcr.yml --env-file .env up -d --no-build --wait --wait-timeout 1200
-docker compose -f docker-compose.ghcr.yml --env-file .env ps
-docker compose -f docker-compose.ghcr.yml --env-file .env logs -f --tail=100 game
+chmod 600 docker-compose.ghcr.yml
+docker compose -p dragonwilds -f docker-compose.ghcr.yml config --quiet
+docker compose -p dragonwilds -f docker-compose.ghcr.yml pull
+docker compose -p dragonwilds -f docker-compose.ghcr.yml up -d --no-build --wait --wait-timeout 1200
+docker compose -p dragonwilds -f docker-compose.ghcr.yml ps
+docker compose -p dragonwilds -f docker-compose.ghcr.yml logs -f --tail=100 game
 ```
 
-Use the same `-f docker-compose.ghcr.yml --env-file .env` options for later stop, restart, update, and teardown commands. To update images, select the published tags/digests in `.env`, then repeat `pull` and `up`. Steam still installs or updates the actual game on startup when `UPDATE_ON_START=true`.
+Use the same `-p dragonwilds -f docker-compose.ghcr.yml` options for later stop, restart, update, and teardown commands. To update images, repeat `pull` and `up`; to select a specific version, edit the two `image` values first. Steam still installs or updates the actual game on startup when `UPDATE_ON_START=true`.
 
-The default `docker-compose.yml` also accepts these image variables, but `scripts/deploy.sh` always builds local source. See [GitHub automation and releases](#github-automation-and-releases) for publication and rollback details.
+The source-build path uses `docker-compose.yml` with `.env`; `scripts/deploy.sh` always builds local source. See [GitHub automation and releases](#github-automation-and-releases) for publication and rollback details.
 
 ## Configuration reference
 
-Defaults below describe the supplied Compose deployment and [.env.example](.env.example). Empty required values must be filled before deployment. Boolean game settings accept lowercase `true` or `false`.
+Defaults below describe the source-build Compose deployment and [.env.example](.env.example). For the standalone GHCR deployment, edit the matching `environment`, `image`, `ports`, `volumes`, and `group_add` entries directly in [docker-compose.ghcr.yml](docker-compose.ghcr.yml). Empty required values must be filled before deployment. Boolean game settings accept lowercase `true` or `false`.
 
 ### Game settings
 
@@ -487,7 +490,7 @@ For contributions, keep documentation aligned with the scripts and defaults, add
 
 The vulnerability gate rejects fixable HIGH/CRITICAL findings and scanner errors; it does not claim zero vulnerabilities or scan a proprietary game payload downloaded later. No workflow deploys or restarts your game server.
 
-Published packages use `ghcr.io/arumes31/runescape-dragonwilds-server` and `ghcr.io/arumes31/runescape-dragonwilds-server-admin`. Main produces `dev` and full-commit SHA tags; stable version tags also produce version aliases and `latest`. Prereleases do not move `latest`. Repository/package access, branch rules, and hosted security permissions must be configured separately. The [.github/workflows](.github/workflows) definitions contain the exact workflow behavior.
+Published packages use `ghcr.io/arumes31/runescape-dragonwilds-server` and `ghcr.io/arumes31/runescape-dragonwilds-server-admin`. Main produces `latest` and full-commit SHA tags; stable version tags also produce version aliases and `latest`. Prereleases do not move `latest`. Repository/package access, branch rules, and hosted security permissions must be configured separately. The [.github/workflows](.github/workflows) definitions contain the exact workflow behavior.
 
 To create a local deployment archive:
 
