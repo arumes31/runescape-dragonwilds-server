@@ -42,16 +42,128 @@ There is no verified wrapper setting to force world simulation while the server 
 ## Requirements
 
 - An x86_64 Linux host, Docker Engine, and the Docker Compose plugin. The admin client uses Docker API **v1.45**, so the daemon must accept that API version.
-- Bash for the supplied deployment scripts and permission to use the Docker daemon.
+- Permission to use the Docker daemon; Bash if using the optional source-build deployment scripts.
 - RAM for the game plus the host and panel. Jagex's guide gives **2 GB + 1 GB per player**, or 8 GB for six players. See the [official server guide](https://dragonwilds.runescape.com/news/how-to-dedicated-servers).
 - Plan for at least **20 GB free disk**, plus space for retained backups and growth; this is the project's deployment allowance.
-- Outbound connectivity for image builds, Steam downloads/metadata, and the game's online services. Both game UDP ports must be reachable by players.
+- Outbound connectivity for GHCR image pulls (or source builds), Steam downloads/metadata, and the game's online services. Both game UDP ports must be reachable by players.
 - A real **32-character hexadecimal Player ID** from in-game Settings. A Steam ID is not a substitute.
 - Separate strong passwords for in-game administration and the web panel.
 
 The images contain their runtime dependencies; production hosts do not need Node or Python installed. Local development uses Node 24, Python 3.11+, and ShellCheck. The CI Compose override requires Compose **2.24.4+** for `!override`.
 
 ## Quick start
+
+### Deploy published GHCR images (recommended)
+
+Create a directory on your Linux server and save the complete example below as `docker-compose.ghcr.yml`. This setup pulls the published game and admin images. **No repository clone, local image build, or `.env` file is required.** All settings are edited directly in the Compose file. The same example is available as [docker-compose.ghcr.yml](docker-compose.ghcr.yml).
+
+```bash
+mkdir -p dragonwilds
+cd dragonwilds
+```
+
+```yaml
+# Edit settings directly in this file. No .env file is required.
+# Keep the Compose project name aligned with admin.COMPOSE_PROJECT_NAME.
+# Deploy: docker compose -p dragonwilds -f docker-compose.ghcr.yml up -d
+name: dragonwilds
+services:
+  game:
+    image: ghcr.io/arumes31/runescape-dragonwilds-server:latest
+    platform: linux/amd64
+    container_name: dragonwilds-game
+    # Automatic restart policy is managed by the admin service.
+    restart: "no"
+    stop_grace_period: 120s
+    ports:
+      - "7777:7777/udp"
+      - "8888:8888/udp"
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      # Required: Player ID from in-game Settings (32 hexadecimal characters).
+      OWNER_ID: ""
+      # Required: in-game administration password.
+      ADMIN_PASSWORD: ""
+      WORLD_PASSWORD: ""
+      SERVER_NAME: "DragonWildsServer"
+      DEFAULT_WORLD_NAME: "MyWorld"
+      DEFAULT_PORT: "7777"
+      # Must equal DEFAULT_PORT + 1111; also update both port mappings above.
+      BEACON_PORT: "8888"
+      MAX_PLAYERS: "6"
+      MULTIHOME: ""
+      UPDATE_ON_START: "true"
+      GENERATE_SETTINGS: "true"
+      BACKUP_KEEP: "7"
+    volumes:
+      - ./server-files:/home/steam/server-files
+      - ./backups:/backups
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+  admin:
+    image: ghcr.io/arumes31/runescape-dragonwilds-server-admin:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      # Required: separate panel password with at least 20 characters.
+      ADMIN_GUI_PASSWORD: ""
+      GAME_CONTAINER: dragonwilds-game
+      COMPOSE_PROJECT_NAME: dragonwilds
+      # Set to your exact panel URL, with scheme and no trailing slash.
+      ADMIN_ORIGINS: "http://localhost:8080,http://127.0.0.1:8080"
+      ADMIN_TRUSTED_PROXIES: ""
+      AUTO_UPDATE_WINDOW_UTC: "anytime"
+      AUTO_UPDATE_UTC_HOUR: "off"
+      AUTO_UPDATE: "true"
+    # Replace 0 with the output of: stat -c '%g' /var/run/docker.sock
+    group_add: ["0"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - admin-state:/data
+      - ./server-files:/game-data:ro
+    read_only: true
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    tmpfs: [/tmp]
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+volumes:
+  admin-state:
+```
+
+Before starting, fill in the required values:
+
+1. `game.environment.OWNER_ID`: your real **32-character hexadecimal Player ID** from in-game Settings.
+2. `game.environment.ADMIN_PASSWORD`: your in-game administration password. Set a separate **20+ character** password in `admin.environment.ADMIN_GUI_PASSWORD`. Generate each with `openssl rand -hex 24`.
+3. `PUID` and `PGID`: the non-root data owner's numeric UID/GID, reported by `id -u` and `id -g` for that account. Replace `admin.group_add: ["0"]` with the Docker socket group reported by `stat -c '%g' /var/run/docker.sock`.
+4. `SERVER_NAME`, `DEFAULT_WORLD_NAME`, and optional `WORLD_PASSWORD`: your server/world settings. For an imported save, match its internal world name in `DEFAULT_WORLD_NAME`.
+5. `ADMIN_ORIGINS`: your exact panel URL, for example `https://dragonwilds.example.net`, with no trailing slash. Configure `ADMIN_TRUSTED_PROXIES` with your proxy's actual peer IP/CIDR as described in [Networking and HTTPS](#networking-and-https).
+6. Check the host data paths and ports. The panel is published on **0.0.0.0:8080** by default for reverse-proxy access. Both UDP ports must be reachable by players. If changing the game port, update both UDP mappings and their environment values; beacon must equal game port + 1111.
+
+Keep the project name `dragonwilds`, `admin.environment.COMPOSE_PROJECT_NAME`, container name `dragonwilds-game`, and `admin.environment.GAME_CONTAINER` aligned. In Portainer, use **dragonwilds** as the stack name or update the matching project/container settings. For Portainer deployments, use absolute host paths for `server-files` and `backups` in both services so their location is explicit.
+
+Keep your configured Compose file private because it contains passwords. In Compose YAML, escape a literal `$` as `$$`; the hexadecimal password generator above avoids interpolation characters. Then validate and start:
+
+```bash
+chmod 600 docker-compose.ghcr.yml
+docker compose -p dragonwilds -f docker-compose.ghcr.yml config --quiet
+docker compose -p dragonwilds -f docker-compose.ghcr.yml pull
+docker compose -p dragonwilds -f docker-compose.ghcr.yml up -d --no-build --wait --wait-timeout 1200
+docker compose -p dragonwilds -f docker-compose.ghcr.yml ps
+docker compose -p dragonwilds -f docker-compose.ghcr.yml logs -f --tail=100 game
+```
+
+First startup installs and validates the game from Steam. A slow download can exceed the 20-minute wait while the containers continue working; follow the game logs before taking further action. Open the URL configured in `ADMIN_ORIGINS`, sign in with `ADMIN_GUI_PASSWORD`, and use the displayed **Join code** when the game publishes it. The configured world password still applies.
+
+Use the same `-p dragonwilds -f docker-compose.ghcr.yml` options for later commands. To update the container images, repeat `pull` and `up`. To apply edited settings, run `up -d`; `restart` does not reload Compose environment values. Steam installs/updates the actual game separately on startup when `UPDATE_ON_START=true`.
+
+Successful main-branch GHCR runs publish `latest`; stable releases also update `latest`, while prereleases do not. Wait for publication before pulling, or select an available release tag. Pin matching game/admin digests for reproducible deployments. Authenticate to GHCR first if the selected packages require it. See [GitHub automation and releases](#github-automation-and-releases) for publication and rollback details.
+
+### Alternative: build from source
 
 Clone the repository on the Linux host (or use an extracted deployment archive):
 
@@ -91,46 +203,6 @@ The deployment script checks the host architecture and Compose configuration, bu
 Open the URL configured in `ADMIN_ORIGINS` and sign in with `ADMIN_GUI_PASSWORD`. For a local-only panel use `ADMIN_BIND_IP=127.0.0.1` and the default localhost origins. After changing environment values, run `docker compose up -d` to recreate affected containers; `docker compose restart` does not reload `.env`.
 
 To find the world, use the game's **Worlds → Public** tab and search its exact, case-sensitive world name. Existing saves retain their own world identity. See the [official joining instructions](https://dragonwilds.runescape.com/news/how-to-dedicated-servers).
-
-### GHCR Docker Compose example
-
-Use [docker-compose.ghcr.yml](docker-compose.ghcr.yml) for a standalone deployment from published images. **All settings are configured directly in this Compose file; no .env file is required.** It includes both services, UDP/panel ports, persistent storage, restart policies, log rotation, and admin security settings, with no local build definitions.
-
-The images are:
-
-```yaml
-services:
-  game:
-    image: ghcr.io/arumes31/runescape-dragonwilds-server:latest
-  admin:
-    image: ghcr.io/arumes31/runescape-dragonwilds-server-admin:latest
-```
-
-This snippet shows only image selection; deploy the complete linked file. Successful main-branch GHCR runs publish `latest`. Stable releases also update `latest`; prereleases do not. Wait for publication before pulling, or select an available release tag. Pin matching game/admin digests for reproducible deployments.
-
-Before starting, edit the full Compose file:
-
-- Fill `game.environment.OWNER_ID`, `game.environment.ADMIN_PASSWORD`, and `admin.environment.ADMIN_GUI_PASSWORD` (at least 20 characters). They are intentionally empty in the public example.
-- Set server/world names, world password, UID/GID, and update settings under `environment`.
-- Set `ADMIN_ORIGINS` to the exact panel URL and configure trusted proxies if needed.
-- Set `admin.group_add` to the Docker socket group ID from `stat -c '%g' /var/run/docker.sock`.
-- Adjust `ports` and host `volumes` directly. If changing the game port, update both game/beacon environment values and UDP mappings; beacon is game port + 1111.
-- Keep the selected Compose project name, `admin.environment.COMPOSE_PROJECT_NAME`, game container name, and `admin.environment.GAME_CONTAINER` aligned. The commands below explicitly use project `dragonwilds`.
-
-The configured file contains passwords; keep that deployment copy private. Authenticate to GHCR first if the selected packages require it, then:
-
-```bash
-chmod 600 docker-compose.ghcr.yml
-docker compose -p dragonwilds -f docker-compose.ghcr.yml config --quiet
-docker compose -p dragonwilds -f docker-compose.ghcr.yml pull
-docker compose -p dragonwilds -f docker-compose.ghcr.yml up -d --no-build --wait --wait-timeout 1200
-docker compose -p dragonwilds -f docker-compose.ghcr.yml ps
-docker compose -p dragonwilds -f docker-compose.ghcr.yml logs -f --tail=100 game
-```
-
-Use the same `-p dragonwilds -f docker-compose.ghcr.yml` options for later stop, restart, update, and teardown commands. To update images, repeat `pull` and `up`; to select a specific version, edit the two `image` values first. Steam still installs or updates the actual game on startup when `UPDATE_ON_START=true`.
-
-The source-build path uses `docker-compose.yml` with `.env`; `scripts/deploy.sh` always builds local source. See [GitHub automation and releases](#github-automation-and-releases) for publication and rollback details.
 
 ## Configuration reference
 
@@ -350,7 +422,7 @@ Run from the project directory using the intended environment file:
 | `docker compose down` | Remove containers/network while retaining bind-mounted data and the named state volume. |
 | `bash scripts/deploy.sh` | Rebuild both images from reviewed source with refreshed base images/packages and wait for readiness. |
 
-Use `docker compose --env-file <file> ...` consistently for nondefault deployments. Avoid `down --volumes` for production: it deletes persisted admin policy/restart history. Do not reuse production save paths for tests.
+For the primary GHCR quick start, add `-p dragonwilds -f docker-compose.ghcr.yml` to the `docker compose` commands above. For source deployments using a nondefault environment file, use `--env-file <file>` consistently. Avoid `down --volumes` for production: it deletes persisted admin policy/restart history. Do not reuse production save paths for tests.
 
 ## Admin HTTP API
 
