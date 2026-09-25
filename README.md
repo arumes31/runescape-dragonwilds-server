@@ -29,7 +29,7 @@ The supplied containers target **Linux x86_64 / amd64**. The game is installed a
 | Server controls | Start, stop, and restart the project's game container, with confirmation in the panel and a 120-second graceful-stop allowance. |
 | Monitoring | Container state, local health, CPU/RAM, startup stages, recent logs, log search, and log export. |
 | Steam versions | Installed and public Steam build IDs from SteamCMD manifest/metadata. No guessed game version strings. |
-| Automatic patching | Check on panel-service startup and every five minutes; restart for a newer build subject to a UTC maintenance window and a persisted two-hour cooldown. |
+| Automatic patching | Check on panel-service startup and every ten minutes; restart for a newer build subject to a UTC maintenance window and a persisted two-hour cooldown. |
 | Manual Steam check | Refresh metadata without directly restarting the game; limited to once per minute. |
 | Daily maintenance | Optional daily restart hour, sharing the window and automatic cooldown. |
 | Save protection | Offline backups before startup updates; retention and preservation of server identity, moderation records, and unmanaged INI fields. |
@@ -265,7 +265,7 @@ The game runs as the `steam` account after initial ownership setup. Tini forward
 
 The installed build comes from `steamapps/appmanifest_4019830.acf` only when its app ID matches and `StateFlags=4` confirms full installation. New, incomplete, and legacy DepotDownloader-only installations display **Unknown / not installed** until SteamCMD validation creates a valid manifest.
 
-The admin service queries Valve independently on startup and every five minutes. A strictly newer public build can trigger a restart when:
+The admin service queries Valve independently on startup and every ten minutes. A strictly newer public build can trigger a restart when:
 
 - `AUTO_UPDATE=true` and `UPDATE_ON_START=true`.
 - The game is running, no control action is busy, and no active backup/download/configuration or health-starting state blocks it.

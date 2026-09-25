@@ -303,7 +303,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const monitor = () => controller.monitorJoinCode().catch(error => console.error('Join code monitor failed:', error.message));
   void monitor();
   const joinCodeTimer = setInterval(monitor, 5000);
-  const versionTimer = setInterval(() => controller.checkUpdates(), 300000);
+  const versionTimer = setInterval(() => controller.checkUpdates(), 600000);
   const timer = setInterval(() => controller.maintain().catch(error => console.error('Maintenance failed:', error.message)), 30000);
   app.listen(Number(process.env.PORT ?? 8080), '0.0.0.0', () => console.log('Dragonwilds admin listening'));
   process.on('SIGTERM', () => { clearInterval(timer); clearInterval(versionTimer); clearInterval(joinCodeTimer); app.close(() => process.exit(0)); });

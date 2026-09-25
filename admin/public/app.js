@@ -57,7 +57,7 @@ async function refresh() {
     $('latest-version').textContent = status.versions.latestBuild ?? 'Unavailable';
     $('version-check').textContent = status.checkingVersions ? 'Contacting Steam…' : status.versions.error ? status.versions.error : status.versions.checkedAt ? `${status.versions.updateAvailable ? 'Update available' : status.versions.installedBuild ? 'No newer build detected' : 'Installed build not confirmed'} · ${date(status.versions.checkedAt)}` : 'Contacting Steam…';
     $('schedule-title').textContent = status.autoUpdate ? 'Keep patches on schedule.' : 'Automatic updates off';
-    $('schedule-detail').textContent = !status.updatesOnStart ? 'Startup updates are disabled. Automatic patching will be skipped.' : status.autoUpdate ? 'Steam is checked every 5 minutes. A newer build triggers a graceful restart inside the maintenance window after the cooldown. Stopped servers stay stopped.' : 'Start or restart manually to install available game patches.';
+    $('schedule-detail').textContent = !status.updatesOnStart ? 'Startup updates are disabled. Automatic patching will be skipped.' : status.autoUpdate ? 'Steam is checked every 10 minutes. A newer build triggers a graceful restart inside the maintenance window after the cooldown. Stopped servers stay stopped.' : 'Start or restart manually to install available game patches.';
     $('last-action').textContent = status.lastAction ? `${date(status.lastAction.at)} · ${status.lastAction.source} · ${status.lastAction.message}` : 'No server actions recorded yet.';
     renderServerAccess(status);
     const logs = await api('logs'); const nearBottom = $('logs').scrollHeight - $('logs').scrollTop - $('logs').clientHeight < 80;
