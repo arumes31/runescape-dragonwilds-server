@@ -145,3 +145,12 @@ test('new settings and Steam endpoints require authentication and valid origin',
   assert.ok(!f.calls.some(([method]) => method === 'POST'));
   assert.equal((await f.request('/api/check-steam', { method: 'POST', headers })).status, 429);
 });
+
+test('join code is authenticated and suppressed during an in-flight server action', async t => {
+  const f = await fixture(t, { joinCodes: {read: async () => ({code: 'VJLW-ZGXX', state: 'available'})} });
+  assert.equal((await f.request('/api/status')).status, 401);
+  const headers = await f.login();
+  assert.equal((await (await f.request('/api/status', {headers})).json()).joinCode.code, 'VJLW-ZGXX');
+  f.controller.busy = true;
+  assert.equal((await (await f.request('/api/status', {headers})).json()).joinCode.code, null);
+});

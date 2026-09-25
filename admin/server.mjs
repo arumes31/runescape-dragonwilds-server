@@ -1,3 +1,4 @@
+import { JoinCodeMonitor } from './join-code.mjs';
 import { trustedProxyMatcher, clientAddress } from './proxy.mjs';
 import { promisify } from 'node:util';
 import { parseWindow, windowStatus, readProgress, startupProgress } from './maintenance.mjs';
@@ -55,10 +56,11 @@ export function nextMaintenance(hour, now = new Date()) {
   return next.toISOString();
 }
 export class Controller {
-  constructor({ docker = dockerClient(), container, project, hour = null, stateFile = null, autoUpdate = true, versionProvider = querySteam, installedProvider = installedBuild, maintenanceWindow = 'anytime', progressProvider = readProgress, clock = () => new Date() }) {
+  constructor({ docker = dockerClient(), container, project, hour = null, stateFile = null, autoUpdate = true, versionProvider = querySteam, installedProvider = installedBuild, maintenanceWindow = 'anytime', progressProvider = readProgress, joinCodes = new JoinCodeMonitor(), clock = () => new Date() }) {
     if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]+$/.test(container)) throw new Error('Invalid container name');
     if (hour !== null && (!Number.isInteger(hour) || hour < 0 || hour > 23)) throw new Error('Invalid update hour');
     this.clock = clock;
+    this.joinCodes = joinCodes;
     this.defaultWindow = parseWindow(maintenanceWindow);
     this.maintenanceWindow = this.defaultWindow;
     this.windowOverride = null;
@@ -98,12 +100,19 @@ export class Controller {
     if (!/^[a-f0-9]{64}$/.test(data.Id)) throw new Error('Invalid Docker container ID');
     return data;
   }
+  async monitorJoinCode(data = null) {
+    const current = data ?? await this.inspect();
+    if (this.busy) return { code: null, state: 'unavailable' };
+    const result = await this.joinCodes.read(current);
+    return this.busy ? { code: null, state: 'unavailable' } : result;
+  }
   async status() {
     const data = await this.inspect();
     const installed = this.installedProvider();
     const versions = { ...this.versions, installedBuild: installed,
       updateAvailable: !this.versions.error && installed !== null && this.versions.latestBuild !== null && BigInt(this.versions.latestBuild) > BigInt(installed) };
-    return { maintenance: this.maintenanceStatus(), progress: this.progress(data), checkingVersions: this.checkingVersions, nextManualCheckAt: this.lastManualCheckAt ? new Date(this.lastManualCheckAt + 60000).toISOString() : null, name: this.container, state: data.State.Status, running: data.State.Running,
+    const joinCode = await this.monitorJoinCode(data);
+    return { joinCode, maintenance: this.maintenanceStatus(), progress: this.progress(data), checkingVersions: this.checkingVersions, nextManualCheckAt: this.lastManualCheckAt ? new Date(this.lastManualCheckAt + 60000).toISOString() : null, name: this.container, state: data.State.Status, running: data.State.Running,
       health: data.State.Health?.Status ?? 'unknown', startedAt: data.State.StartedAt,
       exitCode: data.State.ExitCode, oomKilled: data.State.OOMKilled, restarts: data.RestartCount,
       updatesOnStart: data.Config.Env?.includes('UPDATE_ON_START=true') ?? false,
@@ -291,8 +300,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const trustedProxies = (process.env.ADMIN_TRUSTED_PROXIES ?? '').split(',').map(value => value.trim()).filter(Boolean);
   const app = createApp({ password, controller, origins, trustedProxies, secureCookies: origins.every(origin => origin.startsWith('https://')) });
   controller.checkUpdates();
-  const versionTimer = setInterval(() => controller.checkUpdates(), 300000);
+  const monitor = () => controller.monitorJoinCode().catch(error => console.error('Join code monitor failed:', error.message));
+  void monitor();
+  const joinCodeTimer = setInterval(monitor, 5000);
+  const versionTimer = setInterval(() => controller.checkUpdates(), 600000);
   const timer = setInterval(() => controller.maintain().catch(error => console.error('Maintenance failed:', error.message)), 30000);
   app.listen(Number(process.env.PORT ?? 8080), '0.0.0.0', () => console.log('Dragonwilds admin listening'));
-  process.on('SIGTERM', () => { clearInterval(timer); clearInterval(versionTimer); app.close(() => process.exit(0)); });
+  process.on('SIGTERM', () => { clearInterval(timer); clearInterval(versionTimer); clearInterval(joinCodeTimer); app.close(() => process.exit(0)); });
 }

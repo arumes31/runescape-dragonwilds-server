@@ -1,4 +1,6 @@
 """Docker integration fixtures only. This is not the Dragonwilds game."""
+from datetime import datetime, timezone
+import uuid
 import os
 from pathlib import Path
 import signal
@@ -19,6 +21,15 @@ for value in (port, port + 1111):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(('127.0.0.1', value))
     sockets.append(sock)
+log = root / 'RSDragonwilds/Saved/Logs/RSDragonwilds.log'
+log.parent.mkdir(parents=True, exist_ok=True)
+code = uuid.uuid4().hex[:8].upper()
+code = code[:4] + '-' + code[4:]
+(root / 'fixture-join-code.txt').write_text(code)
+stamp = datetime.now(timezone.utc).strftime('%Y.%m.%d-%H.%M.%S:%f')[:23]
+join_line = f'[{stamp}][119]LogNetSessionSettings: Setting ["JoinCode"] written with key[xz] value[{code}]'
+log.write_text(join_line + '\n' + 'Fixture subsequent output\n' * 250)
+print(join_line, flush=True)
 print('TEST FIXTURE ONLY: lifecycle and UDP probe, not the Dragonwilds game', flush=True)
 print(f'Fixture running as uid={os.getuid()} on {port}/{port+1111}', flush=True)
 
