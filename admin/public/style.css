@@ -14,3 +14,9 @@
 .window-times[hidden]{display:none}
 .window-times input{width:100%;min-width:0;color-scheme:dark}
 #window-feedback{font-size:.85rem;min-height:1.3em}
+
+.join-server{padding:25px;background:var(--surface);border:1px solid var(--line);margin-bottom:20px}
+#join-code{display:block;font:24px/1.4 Consolas,monospace;color:var(--accent);letter-spacing:1px;user-select:all;overflow-wrap:anywhere}
+#join-detail{font-size:13px;margin-bottom:0}
+#copy-join-code{margin-top:14px;width:100%}
+@media(min-width:561px) and (max-width:900px){.join-server{grid-column:1/-1;margin-bottom:0}}

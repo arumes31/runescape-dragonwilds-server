@@ -12,6 +12,26 @@ async function api(path, method = 'GET', body) {
   return result;
 }
 function date(value) { return value && !value.startsWith('0001') ? new Date(value).toLocaleString() : '—'; }
+function renderServerAccess(status) {
+  const running = status?.state === 'running' && status.running;
+  const stopped = ['exited', 'created'].includes(status?.state) && !status.running;
+  $('start').hidden = !stopped;
+  $('restart').hidden = !running;
+  $('stop').hidden = !running;
+  for (const id of ['start', 'restart', 'stop']) $(id).disabled = !status || status.busy || $(id).hidden;
+  const code = running && !status.busy ? status.joinCode?.code : null;
+  $('join-code').textContent = code || (running && !status.busy ? 'Waiting for code…' : 'Unavailable');
+  $('copy-join-code').hidden = !code;
+  $('join-detail').textContent = code ? 'Use this code in Dragonwilds to join this server. The world password is still required if configured.'
+    : !status ? 'Server status is unavailable.'
+    : stopped ? 'Start the server to generate a join code.'
+    : status.joinCode?.state === 'error' ? 'Unable to read the game log. Check the admin container’s game-data mount and file permissions.'
+    : 'Waiting for this startup to publish a join code.';
+  $('control-detail').textContent = !status ? 'Waiting for server status.' : status.busy ? 'A server action is in progress. Please wait.'
+    : stopped ? 'Start the server to bring your world online.'
+    : running ? 'Restart gracefully to apply available game updates. Restart and Stop disconnect connected players.'
+    : 'Controls will return when the container finishes its transition.';
+}
 async function refresh() {
   if (!signedIn || refreshing) return;
   refreshing = true;
@@ -39,9 +59,7 @@ async function refresh() {
     $('schedule-title').textContent = status.autoUpdate ? 'Keep patches on schedule.' : 'Automatic updates off';
     $('schedule-detail').textContent = !status.updatesOnStart ? 'Startup updates are disabled. Automatic patching will be skipped.' : status.autoUpdate ? 'Steam is checked every 5 minutes. A newer build triggers a graceful restart inside the maintenance window after the cooldown. Stopped servers stay stopped.' : 'Start or restart manually to install available game patches.';
     $('last-action').textContent = status.lastAction ? `${date(status.lastAction.at)} · ${status.lastAction.source} · ${status.lastAction.message}` : 'No server actions recorded yet.';
-    $('start').disabled = status.busy || status.running;
-    $('stop').disabled = status.busy || !status.running;
-    $('restart').disabled = status.busy || !status.running;
+    renderServerAccess(status);
     const logs = await api('logs'); const nearBottom = $('logs').scrollHeight - $('logs').scrollTop - $('logs').clientHeight < 80;
     latestLogs = logs.logs; renderLogs();
     if (nearBottom) $('logs').scrollTop = $('logs').scrollHeight;
@@ -52,7 +70,7 @@ async function refresh() {
     } catch { $('cpu').textContent = 'Unavailable'; $('memory').textContent = 'Unavailable'; }
     message();
   } catch (error) {
-    for (const button of document.querySelectorAll('.action')) button.disabled = true;
+    renderServerAccess(null);
     $('health').textContent = 'Unavailable';
     message(error.message, true);
   } finally { refreshing = false; }
@@ -69,12 +87,14 @@ for (const button of document.querySelectorAll('.action')) button.addEventListen
   pendingAction = button.dataset.action;
   $('confirm-title').textContent = `${pendingAction[0].toUpperCase() + pendingAction.slice(1)} server?`;
   $('confirm-action').textContent = `Confirm ${pendingAction}`;
-  $('confirm-detail').textContent = pendingAction === 'start' ? 'The server will start and may install available updates. This can take several minutes.' : 'This disconnects current players. Restarting may take several minutes while updates are installed.';
+  $('confirm-detail').textContent = pendingAction === 'start' ? 'The server will start and may install available updates. This can take several minutes.' : pendingAction === 'stop' ? 'This disconnects current players and stops the server. You can start it again from this panel.' : 'This disconnects current players. Restarting may take several minutes while updates are installed.';
   $('confirm').showModal();
 });
 $('confirm').addEventListener('close', async () => {
   if ($('confirm').returnValue !== 'confirm' || !pendingAction) return;
   const action = pendingAction; pendingAction = null;
+  for (const button of document.querySelectorAll('.action')) button.disabled = true;
+  $('join-code').textContent = 'Unavailable'; $('copy-join-code').hidden = true;
   try { await api(action, 'POST'); message('Action requested. Waiting for Docker…'); await refresh(); } catch (error) { message(error.message, true); }
 });
 setInterval(refresh, 5000);
@@ -117,3 +137,8 @@ $('window-form').addEventListener('submit', event => {
   void saveWindow($('window-mode').value === 'anytime' ? 'anytime' : `${$('window-start').value}-${$('window-end').value}`);
 });
 $('reset-window').addEventListener('click', () => { void saveWindow(null); });
+
+$('copy-join-code').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText($('join-code').textContent); message('Join code copied.'); }
+  catch { message('Select the join code and copy it manually.', true); }
+});

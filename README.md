@@ -505,3 +505,11 @@ This writes `dist/dragonwilds-deployment.zip` and `dist/SHA256SUMS` from **commi
 The original [GPL-3.0 license](LICENSE) and upstream attribution are retained. The landscape is newly generated fan-inspired artwork; the rune icon is an original SVG. Neither is an official Jagex asset or endorsement. RuneScape and Dragonwilds remain their respective owners' trademarks.
 
 Game-specific references: [Jagex dedicated-server guide](https://dragonwilds.runescape.com/news/how-to-dedicated-servers), [official dedicated-server repository](https://github.com/runescape/rsdw-dedicated), and [Valve SteamCMD documentation](https://developer.valvesoftware.com/wiki/SteamCMD).
+
+### Join code and server controls
+
+The signed-in admin overview displays the current server **Join code**, with a copy button. The admin service checks `RSDragonwilds/Saved/Logs/RSDragonwilds.log` through its existing read-only `/game-data` mount every five seconds, even while the page is closed. It accepts `LogNetSessionSettings` JoinCode entries from the current container startup only, and recovers the code from that log when the admin container restarts. Missing or unreadable logs show a waiting/error message; stopped servers and pending actions do not expose a previous code. A code being published does not replace an in-game connectivity check or the configured world password.
+
+Stopped containers show **Start**. Running containers show **Restart** and **Stop**. Controls are disabled during a pending action and hidden when Docker state is unavailable or transitioning.
+
+To install these admin-only changes from a source checkout, run `docker compose up -d --build --no-deps admin` with your usual Compose environment file. For GHCR deployments, build/publish the updated admin image and recreate the admin service with that image. The game container does not need a restart for this panel update.

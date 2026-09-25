@@ -30,6 +30,9 @@ def wait_for(predicate, description):
 
 api('login', {'password': env['ADMIN_GUI_PASSWORD']})
 before = wait_for(lambda value: value['health'] == 'healthy', 'initial container health')
+assert before['joinCode']['code'], 'Startup join code missing from authenticated status'
+initial_code = before['joinCode']['code']
+print('PASS: startup join code captured beyond live-log tail')
 logs = api('logs')['logs']
 assert 'TEST FIXTURE ONLY' in logs
 assert env['ADMIN_PASSWORD'] not in logs
@@ -40,6 +43,9 @@ def fixture_file(path):
     return subprocess.check_output(['docker', 'exec', 'dragonwilds-test-game', 'cat',
         '/home/steam/server-files/' + path], text=True)
 
+assert api('status')['joinCode']['code'] == fixture_file('fixture-join-code.txt')
+assert api('status')['joinCode']['code'] != initial_code, 'Restart exposed the previous join code'
+print('PASS: restarted container publishes its new join code')
 config = fixture_file('RSDragonwilds/Saved/Config/LinuxServer/DedicatedServer.ini')
 assert 'ServerGuid=fixture-stable-identity' in config
 assert 'KnownPlayerList=fixture-banned-player' in config
@@ -47,6 +53,7 @@ assert 'SIGTERM received' in fixture_file('graceful-stop.txt')
 print('PASS: SIGTERM delivery and persistent server identity / ban record')
 api('stop', {})
 wait_for(lambda value: not value['busy'] and not value['running'], 'stop through admin API')
+assert api('status')['joinCode']['code'] is None, 'Stopped server exposed stale join code'
 api('start', {})
 wait_for(lambda value: not value['busy'] and value['health'] == 'healthy', 'start through admin API')
 resources = api('resources')
@@ -59,3 +66,11 @@ try:
 except urllib.error.HTTPError as error:
     assert error.code == 401
 print('PASS: logout revokes the live session')
+
+# Admin-only restart must recover the code without restarting the game.
+subprocess.run(['docker', 'compose', '--env-file', '.env.test.local', 'restart', 'admin'], cwd=root, check=True, stdout=subprocess.DEVNULL)
+time.sleep(2)
+api('login', {'password': env['ADMIN_GUI_PASSWORD']})
+recovered = wait_for(lambda value: value['joinCode']['code'] == fixture_file('fixture-join-code.txt'), 'admin restart recovers current join code')
+assert recovered['running']
+api('logout', {})
